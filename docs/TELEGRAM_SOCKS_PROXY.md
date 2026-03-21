@@ -18,6 +18,8 @@ TELEGRAM_SOCKS_PROXY_URLS=socks5h://USER:PASSWORD@YOUR_PROXY_HOST:443
 
 Локальная разработка на своём ПК с прокси на `127.0.0.1:1080`: задайте `TELEGRAM_SOCKS_PROXY_URLS=socks5h://127.0.0.1:1080` или `TELEGRAM_SOCKS_PROXY_DEFAULT_LOCAL=1`.
 
+При старте бот **откажется** использовать `127.0.0.1` / `localhost` в `TELEGRAM_SOCKS_PROXY_URLS` (чтобы не повторять ошибку Docker). Для особых схем (прокси в другом контейнере в той же сети — тогда лучше имя сервиса compose, не 127.0.0.1): `TELEGRAM_SOCKS_ALLOW_LOOPBACK=1`.
+
 ## Формат URL
 
 Поддерживается **SOCKS5** (часто на порту 443). Пример в `.env` на сервере:

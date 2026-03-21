@@ -67,20 +67,56 @@ function getTelegramSocksProxyUrls(): string[] {
   return [];
 }
 
+function socksUrlHostname(urlStr: string): string | null {
+  try {
+    return new URL(urlStr).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackHostname(host: string): boolean {
+  const h = host.toLowerCase();
+  return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]';
+}
+
 /**
  * SOCKS включён, но нет ни одного URL — иначе раньше подставлялся 127.0.0.1:1080 и ломал Docker.
+ * Также запрещаем 127.0.0.1/localhost в URL в проде/Docker (частая ошибка в .env), если нет TELEGRAM_SOCKS_ALLOW_LOOPBACK=1.
  */
 export function validateTelegramSocksProxyEnv(): void {
   if (!isTelegramProxyEnabled()) return;
-  if (getTelegramSocksProxyUrls().length > 0) return;
-  console.error(
-    '[Startup] Fatal: SOCKS включён (TELEGRAM_SOCKS_PROXY_ENABLED=1 или явные URL), но список прокси пуст. ' +
-      'Задайте TELEGRAM_SOCKS_PROXY_URLS=socks5h://user:pass@HOST:PORT (реальный удалённый SOCKS5). ' +
-      'В Docker 127.0.0.1 — это не хост-машина. Локально у себя на ПК с прокси на :1080: ' +
-      'TELEGRAM_SOCKS_PROXY_URLS=socks5h://127.0.0.1:1080 или TELEGRAM_SOCKS_PROXY_DEFAULT_LOCAL=1. ' +
-      'См. docs/TELEGRAM_SOCKS_PROXY.md'
-  );
-  process.exit(1);
+  const urls = getTelegramSocksProxyUrls();
+  if (urls.length === 0) {
+    console.error(
+      '[Startup] Fatal: SOCKS включён (TELEGRAM_SOCKS_PROXY_ENABLED=1 или явные URL), но список прокси пуст. ' +
+        'Задайте TELEGRAM_SOCKS_PROXY_URLS=socks5h://user:pass@HOST:PORT (реальный удалённый SOCKS5). ' +
+        'В Docker 127.0.0.1 — это не хост-машина. Локально у себя на ПК с прокси на :1080: ' +
+        'TELEGRAM_SOCKS_PROXY_URLS=socks5h://127.0.0.1:1080 или TELEGRAM_SOCKS_PROXY_DEFAULT_LOCAL=1. ' +
+        'См. docs/TELEGRAM_SOCKS_PROXY.md'
+    );
+    process.exit(1);
+  }
+
+  const allowLoopback =
+    process.env.TELEGRAM_SOCKS_ALLOW_LOOPBACK === '1' ||
+    process.env.TELEGRAM_SOCKS_ALLOW_LOOPBACK === 'true';
+  if (allowLoopback) return;
+
+  for (const raw of urls) {
+    const host = socksUrlHostname(raw);
+    if (host && isLoopbackHostname(host)) {
+      console.error(
+        '[Startup] Fatal: TELEGRAM_SOCKS_PROXY_URLS указывает на loopback (' +
+          raw +
+          '). В Docker **127.0.0.1/localhost — это сам контейнер**, не прокси на VPS. ' +
+          'Замените на внешний IP/DNS SOCKS5, например socks5h://user:pass@YOUR_PROXY_IP:443. ' +
+          'Проверьте на сервере: `grep TELEGRAM .env` и `docker compose exec bot env | grep TELEGRAM`. ' +
+          'Исключение (sidecar в одной сети compose): TELEGRAM_SOCKS_ALLOW_LOOPBACK=1. См. docs/TELEGRAM_SOCKS_PROXY.md'
+      );
+      process.exit(1);
+    }
+  }
 }
 
 let cachedTelegramProxyUrlsKey: string | undefined;
