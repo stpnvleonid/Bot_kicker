@@ -1,0 +1,45 @@
+{
+  "name": "bot-kicker",
+  "version": "0.1.0",
+  "description": "Telegram bot: Google Calendar events → chat, threads, DMs; selective push to students",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "prestart": "npm run build",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "stop": "ts-node scripts/stop.ts",
+    "stop:all-node": "powershell -ExecutionPolicy Bypass -File scripts/kill-node-processes.ps1",
+    "migrate": "node dist/db/migrate.js",
+    "migrate:dev": "ts-node src/db/migrate.ts",
+    "check-calendar": "ts-node scripts/check-calendar.ts",
+    "debug-upcoming": "ts-node scripts/debug-upcoming.ts",
+    "debug-routing": "ts-node scripts/debug-routing.ts",
+    "backfill-event-subjects": "ts-node scripts/backfill-event-subjects.ts",
+    "debug-subjects": "ts-node scripts/debug-subjects.ts",
+    "debug-planner-export": "ts-node scripts/debug-planner-export.ts",
+    "diagnose-planner-export": "ts-node scripts/diagnose-planner-export.ts",
+    "recalc-event-subjects": "ts-node scripts/recalc-event-subjects.ts",
+    "move-math-students": "ts-node scripts/move-math-students.ts",
+    "run-job4": "ts-node scripts/run-job4.ts"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.6.0",
+    "dotenv": "^16.4.5",
+    "googleapis": "^144.0.0",
+    "node-cron": "^3.0.3",
+    "socks-proxy-agent": "^9.0.0",
+    "telegraf": "^4.16.3",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.9.0",
+    "@types/node-cron": "^3.0.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}

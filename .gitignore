@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment (шаблон — .env.example — коммитим)
+.env
+.env.local
+.env.*.local
+
+# Google / Telegram credentials
+secrets/*
+!secrets/.gitkeep
+
+# SQLite в data/ (каталог в репо оставляем пустым через .gitkeep)
+data/*
+!data/.gitkeep
+
+# Любые .sqlite / .db вне миграций (локальные БД)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+
+# Logs & runtime
+logs/
+*.log
+.bot.pid
+*.pid
+
+# npm / yarn
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-*
+
+# Cursor / local AI
+.cursor/
+
+# Локальный черновик SQL (не миграции из migrations/)
+/planner_actual_tasks.sql
+
+# Coverage (если появится)
+coverage/
+.nyc_output/
