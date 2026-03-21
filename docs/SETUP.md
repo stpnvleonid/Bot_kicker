@@ -34,7 +34,9 @@ TELEGRAM_SOCKS_PROXY_ENABLED=1
 TELEGRAM_SOCKS_PROXY_URLS=socks5h://127.0.0.1:1080
 ```
 
-Или достаточно задать только `TELEGRAM_SOCKS_PROXY_URLS` — прокси считается включённым. Несколько URL: через запятую/точку с запятой/перенос строки. В Docker без прокси в контейнере **не** указывайте `127.0.0.1` на хост (см. `docs/TROUBLESHOOTING_BOT.md`).
+Или достаточно задать только `TELEGRAM_SOCKS_PROXY_URLS` — прокси считается включённым. Несколько URL: через запятую/точку с запятой/перенос строки.
+
+На **сервере в Docker** укажите **внешний** SOCKS (IP/DNS прокси), не `127.0.0.1` хоста. Локально на ПК можно `127.0.0.1:1080` или `TELEGRAM_SOCKS_PROXY_DEFAULT_LOCAL=1` (см. `docs/TELEGRAM_SOCKS_PROXY.md`).
 
 ---
 

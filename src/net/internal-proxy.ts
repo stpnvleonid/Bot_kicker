@@ -56,9 +56,31 @@ function getTelegramSocksProxyUrls(): string[] {
   const normalizedSingle = normalizeSocksUrl(single ?? '');
   if (normalizedSingle) return [normalizedSingle];
 
-  // Локальный прокси по умолчанию только если SOCKS явно включён (см. isTelegramProxyEnabled).
-  if (isTelegramProxyEnabled()) return ['socks5h://127.0.0.1:1080'];
+  // Не подставляем 127.0.0.1:1080 по умолчанию: в Docker это **контейнер**, не хост → ECONNREFUSED.
+  // Локальная разработка с прокси на машине: явно URL или TELEGRAM_SOCKS_PROXY_DEFAULT_LOCAL=1
+  const defaultLocal =
+    process.env.TELEGRAM_SOCKS_PROXY_DEFAULT_LOCAL === '1' ||
+    process.env.TELEGRAM_SOCKS_PROXY_DEFAULT_LOCAL === 'true';
+  if (defaultLocal && isTelegramProxyEnabled()) {
+    return ['socks5h://127.0.0.1:1080'];
+  }
   return [];
+}
+
+/**
+ * SOCKS включён, но нет ни одного URL — иначе раньше подставлялся 127.0.0.1:1080 и ломал Docker.
+ */
+export function validateTelegramSocksProxyEnv(): void {
+  if (!isTelegramProxyEnabled()) return;
+  if (getTelegramSocksProxyUrls().length > 0) return;
+  console.error(
+    '[Startup] Fatal: SOCKS включён (TELEGRAM_SOCKS_PROXY_ENABLED=1 или явные URL), но список прокси пуст. ' +
+      'Задайте TELEGRAM_SOCKS_PROXY_URLS=socks5h://user:pass@HOST:PORT (реальный удалённый SOCKS5). ' +
+      'В Docker 127.0.0.1 — это не хост-машина. Локально у себя на ПК с прокси на :1080: ' +
+      'TELEGRAM_SOCKS_PROXY_URLS=socks5h://127.0.0.1:1080 или TELEGRAM_SOCKS_PROXY_DEFAULT_LOCAL=1. ' +
+      'См. docs/TELEGRAM_SOCKS_PROXY.md'
+  );
+  process.exit(1);
 }
 
 let cachedTelegramProxyUrlsKey: string | undefined;

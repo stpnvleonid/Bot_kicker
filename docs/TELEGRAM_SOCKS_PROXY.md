@@ -5,6 +5,19 @@
 - Раньше SOCKS применялся только к **`global fetch`**. **Telegraf** ходит в API через **node-fetch** с полем **`telegram.agent`** — без него прокси к `getMe` **не использовался**.
 - Сейчас при `TELEGRAM_SOCKS_PROXY_ENABLED=1` и заданных URL создаётся **SOCKS-агент и передаётся в Telegraf**.
 
+## Ошибка `ECONNREFUSED 127.0.0.1:1080`
+
+В контейнере **`127.0.0.1` — это сам контейнер**, не VPS и не прокси на хосте. Раньше при `TELEGRAM_SOCKS_PROXY_ENABLED=1` **без** `TELEGRAM_SOCKS_PROXY_URLS` подставлялся `127.0.0.1:1080` — это неверно для Docker.
+
+Сейчас нужно **явно** указать URL удалённого SOCKS5, например:
+
+```env
+TELEGRAM_SOCKS_PROXY_ENABLED=1
+TELEGRAM_SOCKS_PROXY_URLS=socks5h://USER:PASSWORD@YOUR_PROXY_HOST:443
+```
+
+Локальная разработка на своём ПК с прокси на `127.0.0.1:1080`: задайте `TELEGRAM_SOCKS_PROXY_URLS=socks5h://127.0.0.1:1080` или `TELEGRAM_SOCKS_PROXY_DEFAULT_LOCAL=1`.
+
 ## Формат URL
 
 Поддерживается **SOCKS5** (часто на порту 443). Пример в `.env` на сервере:

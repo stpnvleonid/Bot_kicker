@@ -13,6 +13,7 @@ import {
   enableFetchProxyFallback,
   getTelegramNodeFetchAgent,
   isTelegramProxyEnabled,
+  validateTelegramSocksProxyEnv,
 } from './net/internal-proxy';
 import { initLogger } from './net/logger';
 import {
@@ -158,6 +159,7 @@ async function main(): Promise<void> {
       ? 'SOCKS proxy enabled (see TELEGRAM_SOCKS_PROXY_*)'
       : 'direct (no SOCKS; set TELEGRAM_SOCKS_PROXY_ENABLED=1 to use local proxy)'
   );
+  validateTelegramSocksProxyEnv();
 
   // First try to route outgoing HTTP/HTTPS via the internal SOCKS5 proxy.
   // If all proxies are unavailable/unreachable, retry requests directly (only Telegram API).
@@ -305,14 +307,23 @@ async function main(): Promise<void> {
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
   /** Подсказка при таймауте/сетевой ошибке к api.telegram.org (часто блокировка хоста). */
-  const logTelegramBlockedHint = (): void => {
+  const logTelegramBlockedHint = (err?: unknown): void => {
+    const msg = String((err as { message?: string })?.message ?? err ?? '');
     const proxyOn = isTelegramProxyEnabled();
+    if (msg.includes('127.0.0.1:1080')) {
+      console.error(
+        '[Startup] Hint: отказ в соединении с **127.0.0.1:1080** — внутри Docker это **сам контейнер**, не прокси на хосте. ' +
+          'Укажите в TELEGRAM_SOCKS_PROXY_URLS **внешний** SOCKS5 (IP/DNS прокси), например socks5h://user:pass@37.x.x.x:443. ' +
+          'Не полагайтесь на 127.0.0.1 без явного URL. См. docs/TELEGRAM_SOCKS_PROXY.md'
+      );
+      return;
+    }
     console.error(
       '[Startup] Hint: не удаётся достучаться до api.telegram.org (таймаут / сеть). ' +
         (proxyOn
-          ? 'SOCKS включён в настройках — проверьте TELEGRAM_SOCKS_PROXY_URLS (доступность хоста/порта, логин/пароль, тип прокси = SOCKS5).'
-          : 'Сейчас режим **direct** — в .env на сервере задайте TELEGRAM_SOCKS_PROXY_ENABLED=1 и TELEGRAM_SOCKS_PROXY_URLS=socks5h://... (см. docs/TELEGRAM_SOCKS_PROXY.md). ' +
-            'Проверка переменных в контейнере: docker compose exec bot env | grep TELEGRAM')
+          ? 'SOCKS включён — проверьте TELEGRAM_SOCKS_PROXY_URLS (доступность хоста/порта, логин/пароль, тип = SOCKS5).'
+          : 'Сейчас режим **direct** — в .env задайте TELEGRAM_SOCKS_PROXY_ENABLED=1 и TELEGRAM_SOCKS_PROXY_URLS=socks5h://... (см. docs/TELEGRAM_SOCKS_PROXY.md). ' +
+            'Проверка: docker compose exec bot env | grep TELEGRAM')
     );
   };
 
@@ -353,7 +364,7 @@ async function main(): Promise<void> {
         const delayMs = Math.min(10000, 500 * attempt * attempt); // ~0.5s, 2s, 4.5s, 8s, 10s
         console.error('[Startup] getMe failed. Attempt', attempt, 'of', maxAttempts, '— retry in', delayMs, 'ms:', e);
         if (attempt === 1 && isLikelyTelegramNetworkFailure(e)) {
-          logTelegramBlockedHint();
+          logTelegramBlockedHint(e);
         }
         await sleep(delayMs);
       }
@@ -369,7 +380,7 @@ async function main(): Promise<void> {
   } catch (e) {
     console.error('[Startup] Fatal: cannot connect to Telegram after retries:', e);
     if (isLikelyTelegramNetworkFailure(e)) {
-      logTelegramBlockedHint();
+      logTelegramBlockedHint(e);
     }
     process.exit(1);
   }
