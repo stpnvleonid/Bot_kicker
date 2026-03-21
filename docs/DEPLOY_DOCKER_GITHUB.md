@@ -78,31 +78,35 @@ git clone https://github.com/YOUR_USER/YOUR_REPO.git .
 
 `.env`, JSON ключ Google и при необходимости БД **не** лежат в git — скопируй их на сервер (SCP/SFTP и т.п.).
 
-С **локальной машины** (подставь пользователя, IP и путь к проекту):
+**Важно — один корень с `docker-compose.yml`:** в compose указано `./secrets` и `./data` — это каталоги **рядом с `docker-compose.yml`**. Если репозиторий лежит в `/opt/bot-kicker/Bot_kicker/`, то файлы должны быть в **`/opt/bot-kicker/Bot_kicker/secrets/`** и **`.../Bot_kicker/data/`**, а не только в `/opt/bot-kicker/secrets/` (родитель без `Bot_kicker`). Иначе в контейнере в `/app/secrets` будет пусто (только `.gitkeep`) — не будет экспорта в Sheets и не заработает ключ Google.
 
-```bash C:\Users\User\Desktop\Bot_kicker
-scp /path/to/Bot_kicker/.env user@SERVER_IP:/opt/bot-kicker/.env
-scp /path/to/Bot_kicker/secrets/calendar-service-account.json user@SERVER_IP:/opt/bot-kicker/secrets/
+С **локальной машины** (подставь пользователя, IP; путь на сервере — туда, где лежит compose):
+
+```bash
+scp /path/to/Bot_kicker/.env user@SERVER_IP:/opt/bot-kicker/Bot_kicker/.env
+scp /path/to/Bot_kicker/secrets/calendar-service-account.json user@SERVER_IP:/opt/bot-kicker/Bot_kicker/secrets/
 ```
 
 Если на сервере ещё нет каталогов:
 
 ```bash
-ssh user@SERVER_IP "mkdir -p /opt/bot-kicker/secrets /opt/bot-kicker/data"
+ssh user@SERVER_IP "mkdir -p /opt/bot-kicker/Bot_kicker/secrets /opt/bot-kicker/Bot_kicker/data"
 ```
 
 **База SQLite:** для нового сервера достаточно пустого `data/`. Чтобы перенести существующую БД:
 
 ```bash
-scp /path/to/Bot_kicker/data/bot.sqlite user@SERVER_IP:/opt/bot-kicker/data/
+scp /path/to/Bot_kicker/data/bot.sqlite user@SERVER_IP:/opt/bot-kicker/Bot_kicker/data/
 ```
+
+**SOCKS и Docker:** если в `.env` указан `TELEGRAM_SOCKS_PROXY_URLS=socks5h://127.0.0.1:1080`, внутри контейнера `127.0.0.1` — **не** хост. Для прямого доступа к Telegram API без прокси в контейнере добавь в `.env`: `TELEGRAM_SOCKS_PROXY_ENABLED=0` (или подними прокси и укажи IP хоста/`host.docker.internal` по документации Docker).
 
 На сервере ограничь права:
 
 ```bash
-chmod 600 /opt/bot-kicker/.env
-chmod 600 /opt/bot-kicker/secrets/calendar-service-account.json
-chmod 600 /opt/bot-kicker/data/bot.sqlite 2>/dev/null || true
+chmod 600 /opt/bot-kicker/Bot_kicker/.env
+chmod 600 /opt/bot-kicker/Bot_kicker/secrets/calendar-service-account.json
+chmod 600 /opt/bot-kicker/Bot_kicker/data/bot.sqlite 2>/dev/null || true
 ```
 
 ---
@@ -134,7 +138,7 @@ GOOGLE_APPLICATION_CREDENTIALS=./secrets/calendar-service-account.json
 ## 5. Сборка и запуск
 
 ```bash
-cd /opt/bot-kicker
+cd /opt/bot-kicker/Bot_kicker
 docker compose build
 docker compose up -d
 ```
@@ -166,7 +170,7 @@ docker compose logs -f bot
 ## 7. Обновление после нового пуша в GitHub
 
 ```bash
-cd /opt/bot-kicker
+cd /opt/bot-kicker/Bot_kicker
 git pull
 docker compose build
 docker compose up -d
@@ -188,14 +192,14 @@ docker compose up -d
 **1. С Windows (PowerShell)** — путь к `.env`, пользователь, IP, порт SSH и ключ подставь свои; путь в кавычках, если есть `C:\`:
 
 ```powershell
-scp -P ВАШ_SSH_ПОРТ -i "C:\Users\ТЫ\.ssh\id_ed25519" "C:\Users\User\Desktop\Bot_kicker\.env" admin01@IP_СЕРВЕРА:/opt/bot-kicker/.env
+scp -P ВАШ_SSH_ПОРТ -i "C:\Users\ТЫ\.ssh\id_ed25519" "C:\Users\User\Desktop\Bot_kicker\.env" admin01@IP_СЕРВЕРА:/opt/bot-kicker/Bot_kicker/.env
 ```
 
 **2. На сервере по SSH:**
 
 ```bash
-chmod 600 /opt/bot-kicker/.env
-cd /opt/bot-kicker
+chmod 600 /opt/bot-kicker/Bot_kicker/.env
+cd /opt/bot-kicker/Bot_kicker
 docker compose up -d --force-recreate
 ```
 
@@ -228,36 +232,59 @@ docker compose logs bot --tail 30
 
 - Смотри логи: `docker compose logs bot --tail 100`.
 - Ошибки сборки / модулей — попробуй: `docker compose build --no-cache`.
-- `BOT_TOKEN is required` или нет файла ключа — проверь наличие `.env` и `secrets/` в `/opt/bot-kicker` и пути в `.env`.
+- `BOT_TOKEN is required` или нет файла ключа — проверь наличие `.env` и `secrets/` **в каталоге с `docker-compose.yml`** (например `/opt/bot-kicker/Bot_kicker/`) и пути в `.env`.
 - Права на файлы: `chmod 600` для `.env` и JSON в `secrets/`.
 
-### Сборка: `lookup registry-1.docker.io` / DNS timeout / не тянется `node:...`
+### Сборка: `lookup registry-1.docker.io` / DNS timeout / в логе `docker-container:mybuilder`
 
-Образ базы (`FROM node:20-bookworm-slim`) качается с **Docker Hub**. Если падает резолв или таймаут:
+Сообщение **`docker-container:mybuilder`** значит: сборка идёт через **удалённый buildx-билдер** (отдельный контейнер). У него **свой DNS** (часто таймаут к `10.100.10.1:53`), хотя на **хосте** `docker pull` может работать.
 
-1. **На сервере (не в контейнере):** проверь сеть и DNS:
-   ```bash
-   ping -c 2 8.8.8.8
-   nslookup registry-1.docker.io
-   docker pull node:20-bookworm-slim
-   ```
-   Если `docker pull` не проходит — почини доступ/DNS у VPS или у провайдера.
+**Сначала убери этот билдер и собери через `default`:**
 
-2. **DNS для Docker** (часто помогает при кривом резолве у хостера), в `/etc/docker/daemon.json`:
-   ```json
-   { "dns": ["8.8.8.8", "1.1.1.1"] }
-   ```
-   затем `sudo systemctl restart docker` и снова `docker compose build`.
+```bash
+docker buildx ls
+docker buildx use default
+docker compose build --no-cache
+docker compose up -d
+```
 
-3. **Сборка через удалённый buildx** (`docker-container:mybuilder`): переключись на локальный билдер:
-   ```bash
-   docker buildx use default
-   docker compose build
-   ```
+Если `mybuilder` не нужен:
 
-4. Попробовать без Bake: `COMPOSE_BAKE=false docker compose build` (если мешает экспериментальный режим).
+```bash
+docker buildx rm mybuilder
+```
 
-Подробнее про сеть образов: [DOCKER.md](DOCKER.md).
+**Если ошибка DNS остаётся** — на хосте:
+
+```bash
+ping -c 2 8.8.8.8
+nslookup registry-1.docker.io
+docker pull node:20-bookworm-slim
+```
+
+Если **`docker pull` с хоста проходит**, а `compose build` — нет, почти всегда виноват **не тот buildx** (см. выше).
+
+**DNS для демона Docker** (`/etc/docker/daemon.json`):
+
+```json
+{ "dns": ["8.8.8.8", "1.1.1.1"] }
+```
+
+`sudo systemctl restart docker`, затем снова сборка.
+
+**Запасной вариант — сборка без BuildKit** (старый движок, иногда иначе ходит в сеть):
+
+```bash
+export DOCKER_BUILDKIT=0
+export COMPOSE_DOCKER_CLI_BUILD=0
+docker compose build --no-cache
+docker compose up -d
+unset DOCKER_BUILDKIT COMPOSE_DOCKER_CLI_BUILD
+```
+
+Без Bake: `COMPOSE_BAKE=false docker compose build`.
+
+Подробнее: [DOCKER.md](DOCKER.md).
 
 ---
 

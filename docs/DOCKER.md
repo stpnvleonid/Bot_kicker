@@ -108,7 +108,8 @@ GOOGLE_APPLICATION_CREDENTIALS=./secrets/calendar-service-account.json
 Проверь на **хосте**: `nslookup registry-1.docker.io`, `docker pull node:20-bookworm-slim`. Если не работает — сеть/DNS у сервера или блокировка Docker Hub.
 
 - Пропиши DNS для демона Docker (`/etc/docker/daemon.json`: `"dns": ["8.8.8.8","1.1.1.1"]`) и перезапусти `docker`.
-- Если используется **buildx** с отдельным билдером (`mybuilder`), попробуй: `docker buildx use default` и снова `docker compose build`.
+- Если в логе сборки указано **`docker-container:mybuilder`** — это **удалённый buildx**; у него часто ломается DNS. Выполни **`docker buildx use default`**, при необходимости **`docker buildx rm mybuilder`**, затем снова `docker compose build`. Подробнее: [DEPLOY_DOCKER_GITHUB.md §9](DEPLOY_DOCKER_GITHUB.md).
+- Запасной вариант: **`DOCKER_BUILDKIT=0`** и **`COMPOSE_DOCKER_CLI_BUILD=0`** перед `docker compose build`.
 
 ---
 

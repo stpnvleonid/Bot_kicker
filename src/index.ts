@@ -99,12 +99,25 @@ function validateCalendarConfig(): boolean {
 function validatePlannerConfig(): boolean {
   const config = getConfig();
   const sheetId = config.PLANNER_SHEET_ID;
-  if (!sheetId || !sheetId.trim()) return false;
+  if (!sheetId || !sheetId.trim()) {
+    console.warn('[Startup] PLANNER_SHEET_ID не задан или пустой — экспорт планера в Sheets отключён.');
+    return false;
+  }
 
   const keyPath = config.GOOGLE_APPLICATION_CREDENTIALS;
-  if (!keyPath || !keyPath.trim()) return false;
+  if (!keyPath || !keyPath.trim()) {
+    console.warn('[Startup] GOOGLE_APPLICATION_CREDENTIALS не задан — экспорт планера в Sheets отключён.');
+    return false;
+  }
   const resolved = path.resolve(keyPath);
-  if (!fs.existsSync(resolved)) return false;
+  if (!fs.existsSync(resolved)) {
+    console.warn(
+      '[Startup] Файл ключа Google не найден для планера:',
+      resolved,
+      '(проверьте том ./secrets в Docker и путь в .env).'
+    );
+    return false;
+  }
   return true;
 }
 
