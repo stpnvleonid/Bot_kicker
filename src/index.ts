@@ -304,6 +304,34 @@ async function main(): Promise<void> {
 
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+  /** Подсказка при таймауте/сетевой ошибке к api.telegram.org (часто блокировка хоста). */
+  const logTelegramBlockedHint = (): void => {
+    const proxyOn = isTelegramProxyEnabled();
+    console.error(
+      '[Startup] Hint: не удаётся достучаться до api.telegram.org (таймаут / сеть). ' +
+        (proxyOn
+          ? 'SOCKS включён в настройках — проверьте TELEGRAM_SOCKS_PROXY_URLS (доступность хоста/порта, логин/пароль, тип прокси = SOCKS5).'
+          : 'Сейчас режим **direct** — в .env на сервере задайте TELEGRAM_SOCKS_PROXY_ENABLED=1 и TELEGRAM_SOCKS_PROXY_URLS=socks5h://... (см. docs/TELEGRAM_SOCKS_PROXY.md). ' +
+            'Проверка переменных в контейнере: docker compose exec bot env | grep TELEGRAM')
+    );
+  };
+
+  const isLikelyTelegramNetworkFailure = (e: unknown): boolean => {
+    const msg = String((e as { message?: string })?.message ?? e);
+    const type = String((e as { type?: string })?.type ?? '');
+    return (
+      type === 'request-timeout' ||
+      type === 'system' ||
+      msg.includes('api.telegram.org') ||
+      msg.includes('timeout') ||
+      msg.includes('ETIMEDOUT') ||
+      msg.includes('ECONNREFUSED') ||
+      msg.includes('ENOTFOUND') ||
+      msg.includes('EAI_AGAIN') ||
+      msg.includes('ECONNRESET')
+    );
+  };
+
   /**
    * Важно: `bot.launch()` при long polling **никогда не резолвится** — внутри бесконечный цикл getUpdates.
    * Поэтому нельзя `await bot.launch()` и ждать строку «бот запущен» — код после await никогда не выполнится.
@@ -324,6 +352,9 @@ async function main(): Promise<void> {
         lastErr = e;
         const delayMs = Math.min(10000, 500 * attempt * attempt); // ~0.5s, 2s, 4.5s, 8s, 10s
         console.error('[Startup] getMe failed. Attempt', attempt, 'of', maxAttempts, '— retry in', delayMs, 'ms:', e);
+        if (attempt === 1 && isLikelyTelegramNetworkFailure(e)) {
+          logTelegramBlockedHint();
+        }
         await sleep(delayMs);
       }
     }
@@ -337,6 +368,9 @@ async function main(): Promise<void> {
     console.log('[Startup] Bot started (polling) — registering background jobs...');
   } catch (e) {
     console.error('[Startup] Fatal: cannot connect to Telegram after retries:', e);
+    if (isLikelyTelegramNetworkFailure(e)) {
+      logTelegramBlockedHint();
+    }
     process.exit(1);
   }
 
