@@ -9,7 +9,7 @@ import { Telegraf } from 'telegraf';
 import { getConfig } from './config';
 import { getDb, closeDb } from './db';
 import { runMigrations } from './db/migrate';
-import { enableFetchProxyFallback } from './net/internal-proxy';
+import { enableFetchProxyFallback, isTelegramProxyEnabled } from './net/internal-proxy';
 import { initLogger } from './net/logger';
 import {
   handleStart,
@@ -148,6 +148,12 @@ async function main(): Promise<void> {
   }
 
   console.log('[Startup] Bot version:', BOT_VERSION);
+  console.log(
+    '[Startup] Telegram API:',
+    isTelegramProxyEnabled()
+      ? 'SOCKS proxy enabled (see TELEGRAM_SOCKS_PROXY_*)'
+      : 'direct (no SOCKS; set TELEGRAM_SOCKS_PROXY_ENABLED=1 to use local proxy)'
+  );
 
   // First try to route outgoing HTTP/HTTPS via the internal SOCKS5 proxy.
   // If all proxies are unavailable/unreachable, retry requests directly (only Telegram API).
@@ -303,6 +309,7 @@ async function main(): Promise<void> {
   // Telegraf на старте делает getMe для проверки токена, и при нестабильном интернете это может давать ECONNRESET.
   // Ретраим запуск; джобы ниже стартуют только после успешного polling — иначе в логах были бы Job2 без ответа в Telegram.
   try {
+    console.log('[Startup] Connecting to Telegram (getMe + long polling)...');
     await launchWithRetry(5);
   } catch (e) {
     console.error('[Startup] Fatal: cannot launch bot after retries:', e);

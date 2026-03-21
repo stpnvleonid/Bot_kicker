@@ -8,13 +8,6 @@ export type ProxyConfig = {
   socksUrl: string;
 };
 
-function isTelegramProxyEnabled(): boolean {
-  // Keep backward compatibility with previous variable name.
-  if (process.env.INTERNAL_SOCKS_PROXY_ENABLED === '0') return false;
-  if (process.env.TELEGRAM_SOCKS_PROXY_ENABLED === '0') return false;
-  return true;
-}
-
 function normalizeSocksUrl(raw: string): string | null {
   const s = raw.trim();
   if (!s) return null;
@@ -31,6 +24,27 @@ function parseSocksUrlList(value: string | undefined): string[] {
     .filter((x): x is string => !!x);
 }
 
+function hasExplicitTelegramProxyUrls(): boolean {
+  const listFromEnv = process.env.TELEGRAM_SOCKS_PROXY_URLS;
+  if (listFromEnv && parseSocksUrlList(listFromEnv).length > 0) return true;
+  const single = process.env.INTERNAL_SOCKS_PROXY_URL?.trim();
+  return !!normalizeSocksUrl(single ?? '');
+}
+
+/**
+ * SOCKS для Telegram — **по умолчанию выключен** (прямое подключение к api.telegram.org).
+ * В Docker `127.0.0.1:1080` — это контейнер, не хост; включение по умолчанию давало «тишину» в логах из‑за долгого/зависшего коннекта к прокси.
+ *
+ * Включить: `TELEGRAM_SOCKS_PROXY_ENABLED=1` или задать `TELEGRAM_SOCKS_PROXY_URLS` / `INTERNAL_SOCKS_PROXY_URL`.
+ */
+export function isTelegramProxyEnabled(): boolean {
+  if (process.env.INTERNAL_SOCKS_PROXY_ENABLED === '0') return false;
+  if (process.env.TELEGRAM_SOCKS_PROXY_ENABLED === '0') return false;
+  if (process.env.TELEGRAM_SOCKS_PROXY_ENABLED === '1') return true;
+  if (process.env.INTERNAL_SOCKS_PROXY_ENABLED === '1') return true;
+  return hasExplicitTelegramProxyUrls();
+}
+
 function getTelegramSocksProxyUrls(): string[] {
   const listFromEnv = process.env.TELEGRAM_SOCKS_PROXY_URLS;
   const parsedList = parseSocksUrlList(listFromEnv);
@@ -41,8 +55,9 @@ function getTelegramSocksProxyUrls(): string[] {
   const normalizedSingle = normalizeSocksUrl(single ?? '');
   if (normalizedSingle) return [normalizedSingle];
 
-  // Safe default for local setups.
-  return ['socks5h://127.0.0.1:1080'];
+  // Локальный прокси по умолчанию только если SOCKS явно включён (см. isTelegramProxyEnabled).
+  if (isTelegramProxyEnabled()) return ['socks5h://127.0.0.1:1080'];
+  return [];
 }
 
 let cachedTelegramProxyUrlsKey: string | undefined;

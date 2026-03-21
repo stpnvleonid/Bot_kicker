@@ -7,8 +7,9 @@ cd /path/to/Bot_kicker   # каталог с docker-compose.yml
 docker compose logs bot --tail 80
 ```
 
-**Должна быть строка:** `Bot started (polling)`  
-Если вместо неё **`Fatal: cannot launch bot after retries`** — не проходит подключение к **Telegram API** (сеть, токен, прокси).
+**Ожидаемый порядок:** `Bot version` → `Telegram API: direct` (или SOCKS) → `Connecting to Telegram` → **`Bot started (polling)`**.  
+Если после `Connecting to Telegram` тишина минутами — часто **зависший коннект через SOCKS** на `127.0.0.1` внутри контейнера; с версией кода SOCKS по умолчанию **выключен** (прямой доступ). Обновите образ и пересоздайте контейнер.  
+Если вместо успеха — **`Fatal: cannot launch bot after retries`** — сеть/токен/прокси.
 
 ## 2. Токен
 

@@ -27,14 +27,14 @@ TZ=Europe/Moscow
 
 ### Telegram SOCKS5 (опционально)
 
-В проекте есть локальный “внутренний прокси” (из папки `proxy`) для Telegram Bot API.
-
-Можно указать несколько SOCKS5 (через запятую/точку с запятой/перенос строки):
+По умолчанию бот ходит в **Telegram API напрямую** (без SOCKS). Локальный прокси из папки `proxy` включается так:
 
 ```env
+TELEGRAM_SOCKS_PROXY_ENABLED=1
 TELEGRAM_SOCKS_PROXY_URLS=socks5h://127.0.0.1:1080
-# TELEGRAM_SOCKS_PROXY_ENABLED=0     # отключить проксирование Telegram
 ```
+
+Или достаточно задать только `TELEGRAM_SOCKS_PROXY_URLS` — прокси считается включённым. Несколько URL: через запятую/точку с запятой/перенос строки. В Docker без прокси в контейнере **не** указывайте `127.0.0.1` на хост (см. `docs/TROUBLESHOOTING_BOT.md`).
 
 ---
 
