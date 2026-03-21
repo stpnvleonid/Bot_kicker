@@ -139,11 +139,13 @@ docker compose build
 docker compose up -d
 ```
 
-Или одной командой при первом запуске:
+Или одной командой при первом запуске (рекомендуется — собирает образ, не ищет `bot-kicker` на Docker Hub):
 
 ```bash
 docker compose up -d --build
 ```
+
+В `docker-compose.yml` для сервиса задано `pull_policy: never` и `build.network: host`, чтобы не было лишнего `pull` несуществующего образа и чтобы сборка использовала DNS хоста (полезно при таймаутах к `registry-1.docker.io`).
 
 Логи (ожидается строка вроде `Bot started (polling)`):
 
@@ -228,6 +230,34 @@ docker compose logs bot --tail 30
 - Ошибки сборки / модулей — попробуй: `docker compose build --no-cache`.
 - `BOT_TOKEN is required` или нет файла ключа — проверь наличие `.env` и `secrets/` в `/opt/bot-kicker` и пути в `.env`.
 - Права на файлы: `chmod 600` для `.env` и JSON в `secrets/`.
+
+### Сборка: `lookup registry-1.docker.io` / DNS timeout / не тянется `node:...`
+
+Образ базы (`FROM node:20-bookworm-slim`) качается с **Docker Hub**. Если падает резолв или таймаут:
+
+1. **На сервере (не в контейнере):** проверь сеть и DNS:
+   ```bash
+   ping -c 2 8.8.8.8
+   nslookup registry-1.docker.io
+   docker pull node:20-bookworm-slim
+   ```
+   Если `docker pull` не проходит — почини доступ/DNS у VPS или у провайдера.
+
+2. **DNS для Docker** (часто помогает при кривом резолве у хостера), в `/etc/docker/daemon.json`:
+   ```json
+   { "dns": ["8.8.8.8", "1.1.1.1"] }
+   ```
+   затем `sudo systemctl restart docker` и снова `docker compose build`.
+
+3. **Сборка через удалённый buildx** (`docker-container:mybuilder`): переключись на локальный билдер:
+   ```bash
+   docker buildx use default
+   docker compose build
+   ```
+
+4. Попробовать без Bake: `COMPOSE_BAKE=false docker compose build` (если мешает экспериментальный режим).
+
+Подробнее про сеть образов: [DOCKER.md](DOCKER.md).
 
 ---
 

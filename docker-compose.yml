@@ -3,8 +3,13 @@
 
 services:
   bot:
-    build: .
+    # Не тянуть bot-kicker с Docker Hub (такого образа нет) — только сборка из Dockerfile
     image: bot-kicker:latest
+    pull_policy: never
+    build:
+      context: .
+      # Сеть хоста при сборке: DNS/доступ к registry часто стабильнее, чем у внутренней сети buildkit
+      network: host
     container_name: bot-kicker
     restart: unless-stopped
     env_file:

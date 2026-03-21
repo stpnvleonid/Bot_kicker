@@ -103,6 +103,15 @@ GOOGLE_APPLICATION_CREDENTIALS=./secrets/calendar-service-account.json
 
 ---
 
+### Сборка: не качается образ `node:...` с Docker Hub (`registry-1.docker.io`, DNS timeout)
+
+Проверь на **хосте**: `nslookup registry-1.docker.io`, `docker pull node:20-bookworm-slim`. Если не работает — сеть/DNS у сервера или блокировка Docker Hub.
+
+- Пропиши DNS для демона Docker (`/etc/docker/daemon.json`: `"dns": ["8.8.8.8","1.1.1.1"]`) и перезапусти `docker`.
+- Если используется **buildx** с отдельным билдером (`mybuilder`), попробуй: `docker buildx use default` и снова `docker compose build`.
+
+---
+
 ### Сборка падает с `npm error network ETIMEDOUT`
 
 Часто нестабильный канал до **registry.npmjs.org** на сервере. В `Dockerfile` уже: один `npm ci` в стадии **builder**, в **runner** `node_modules` копируется без повторной загрузки; увеличен `NPM_CONFIG_FETCH_TIMEOUT`.
