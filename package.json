@@ -21,7 +21,10 @@
     "diagnose-planner-export": "ts-node scripts/diagnose-planner-export.ts",
     "recalc-event-subjects": "ts-node scripts/recalc-event-subjects.ts",
     "move-math-students": "ts-node scripts/move-math-students.ts",
-    "run-job4": "ts-node scripts/run-job4.ts"
+    "run-job4": "ts-node scripts/run-job4.ts",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up -d",
+    "docker:logs": "docker compose logs -f bot"
   },
   "engines": {
     "node": ">=18"

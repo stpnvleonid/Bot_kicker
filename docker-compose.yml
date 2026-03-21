@@ -1,0 +1,18 @@
+# Запуск: на сервере рядом с compose лежат .env, каталоги secrets/ и data/ (не в образе).
+# docker compose up -d --build
+
+services:
+  bot:
+    build: .
+    image: bot-kicker:latest
+    container_name: bot-kicker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # только чтение для ключа Google; при необходимости смените на rw
+      - ./secrets:/app/secrets:ro
+      # БД SQLite — персистентность; без тома данные пропадут при удалении контейнера
+      - ./data:/app/data
+    environment:
+      TZ: Europe/Moscow

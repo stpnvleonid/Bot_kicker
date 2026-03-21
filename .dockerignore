@@ -1,0 +1,23 @@
+# Контекст сборки — без секретов, БД и мусора
+.git
+.github
+node_modules
+dist
+logs
+*.log
+.env
+secrets/*
+!secrets/.gitkeep
+data/*
+!data/.gitkeep
+.cursor
+.vscode
+.idea
+docs
+proxy
+scripts
+planner_actual_tasks.sql
+*.db
+.bot.pid
+coverage
+.npm
