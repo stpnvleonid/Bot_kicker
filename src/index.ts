@@ -9,7 +9,11 @@ import { Telegraf } from 'telegraf';
 import { getConfig } from './config';
 import { getDb, closeDb } from './db';
 import { runMigrations } from './db/migrate';
-import { enableFetchProxyFallback, isTelegramProxyEnabled } from './net/internal-proxy';
+import {
+  enableFetchProxyFallback,
+  getTelegramNodeFetchAgent,
+  isTelegramProxyEnabled,
+} from './net/internal-proxy';
 import { initLogger } from './net/logger';
 import {
   handleStart,
@@ -158,7 +162,17 @@ async function main(): Promise<void> {
   // First try to route outgoing HTTP/HTTPS via the internal SOCKS5 proxy.
   // If all proxies are unavailable/unreachable, retry requests directly (only Telegram API).
   enableFetchProxyFallback();
-  const bot = new Telegraf(config.BOT_TOKEN);
+
+  // Telegraf → node-fetch → свой agent; global fetch не используется для Bot API.
+  const telegramHttpAgent = await getTelegramNodeFetchAgent();
+  if (telegramHttpAgent) {
+    console.log('[Startup] Telegraf: SOCKS agent attached (api.telegram.org via proxy)');
+  }
+
+  const bot = new Telegraf(
+    config.BOT_TOKEN,
+    telegramHttpAgent ? { telegram: { agent: telegramHttpAgent } } : {}
+  );
 
   // Хэндлы для фоновых задач, чтобы корректно останавливать их при завершении процесса.
   let job1CalendarSync: cron.ScheduledTask | null = null;

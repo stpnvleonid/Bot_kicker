@@ -1,3 +1,4 @@
+import type { Agent as HttpAgent } from 'node:http';
 import type { SocksProxyAgent } from 'socks-proxy-agent';
 
 export type ProxyConfig = {
@@ -78,6 +79,17 @@ async function getInternalProxyAgentsAsync(): Promise<SocksProxyAgent[]> {
   cachedTelegramProxyUrlsKey = key;
   cachedTelegramProxyAgents = urls.map((u) => new (SocksProxyAgentCtor as any)(u));
   return cachedTelegramProxyAgents;
+}
+
+/**
+ * Агент для `new Telegraf(token, { telegram: { agent } })`.
+ * Telegraf вызывает Telegram API через **node-fetch** с этим агентом, а не через `global fetch`,
+ * поэтому без этого SOCKS к api.telegram.org не применяется (в отличие от `enableFetchProxyFallback`).
+ */
+export async function getTelegramNodeFetchAgent(): Promise<HttpAgent | undefined> {
+  const agents = await getInternalProxyAgentsAsync();
+  const first = agents[0];
+  return first as HttpAgent | undefined;
 }
 
 function isLikelyProxyNetworkError(err: unknown): boolean {

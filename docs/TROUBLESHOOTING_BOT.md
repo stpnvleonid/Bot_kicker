@@ -50,4 +50,4 @@ docker compose up -d --force-recreate
 docker compose logs -f bot
 ```
 
-См. также: [DEPLOY_DOCKER_GITHUB.md](DEPLOY_DOCKER_GITHUB.md).
+См. также: [DEPLOY_DOCKER_GITHUB.md](DEPLOY_DOCKER_GITHUB.md), [SOCKS5 для Telegram](TELEGRAM_SOCKS_PROXY.md) (Telegraf использует отдельный HTTP-агент, не только `fetch`).
