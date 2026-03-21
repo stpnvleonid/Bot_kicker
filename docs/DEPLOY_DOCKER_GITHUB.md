@@ -80,7 +80,7 @@ git clone https://github.com/YOUR_USER/YOUR_REPO.git .
 
 С **локальной машины** (подставь пользователя, IP и путь к проекту):
 
-```bash
+```bash C:\Users\User\Desktop\Bot_kicker
 scp /path/to/Bot_kicker/.env user@SERVER_IP:/opt/bot-kicker/.env
 scp /path/to/Bot_kicker/secrets/calendar-service-account.json user@SERVER_IP:/opt/bot-kicker/secrets/
 ```
@@ -122,6 +122,12 @@ GOOGLE_APPLICATION_CREDENTIALS=./secrets/calendar-service-account.json
 ```
 
 Остальное (`BOT_TOKEN`, `PLANNER_SHEET_ID`, `TZ`, …) — как в `.env.example` и на локальной машине.
+
+**Docker Compose и символ `!`:** если `PLANNER_SHEET_RANGE` содержит `!` (как в Google Sheets `Лист!A:D`), задайте значение **в двойных кавычках**, например:  
+`PLANNER_SHEET_RANGE="'Название листа'!A:O"` — иначе `docker compose` выдаст ошибку парсинга `.env`.
+
+Проверка доступа к таблице с машины, где есть `.env` и `secrets/`:  
+`npm run check-planner-sheet`
 
 ---
 
@@ -170,6 +176,36 @@ docker compose up -d
 docker compose run --rm bot node dist/db/migrate.js
 docker compose up -d
 ```
+
+---
+
+## 7.1. Обновить только `.env` на сервере
+
+Файл `.env` в git не хранится — после правок на своём ПК залей его на сервер и **пересоздай контейнер**, иначе переменные окружения не обновятся (простой `restart` подхватывает старый env).
+
+**1. С Windows (PowerShell)** — путь к `.env`, пользователь, IP, порт SSH и ключ подставь свои; путь в кавычках, если есть `C:\`:
+
+```powershell
+scp -P ВАШ_SSH_ПОРТ -i "C:\Users\ТЫ\.ssh\id_ed25519" "C:\Users\User\Desktop\Bot_kicker\.env" admin01@IP_СЕРВЕРА:/opt/bot-kicker/.env
+```
+
+**2. На сервере по SSH:**
+
+```bash
+chmod 600 /opt/bot-kicker/.env
+cd /opt/bot-kicker
+docker compose up -d --force-recreate
+```
+
+`--force-recreate` создаёт контейнер заново и снова читает `env_file: .env`.
+
+**3. Проверка:**
+
+```bash
+docker compose logs bot --tail 30
+```
+
+Если менялся только `.env` и не код образа — `docker compose build` не обязателен.
 
 ---
 

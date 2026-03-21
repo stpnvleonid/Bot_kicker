@@ -103,6 +103,18 @@ GOOGLE_APPLICATION_CREDENTIALS=./secrets/calendar-service-account.json
 
 ---
 
+### Сборка падает с `npm error network ETIMEDOUT`
+
+Часто нестабильный канал до **registry.npmjs.org** на сервере. В `Dockerfile` уже: один `npm ci` в стадии **builder**, в **runner** `node_modules` копируется без повторной загрузки; увеличен `NPM_CONFIG_FETCH_TIMEOUT`.
+
+Если таймаут всё ещё на шаге `npm ci` в builder:
+
+- повторить `docker compose build`;
+- при необходимости: `docker build --network=host` (или в compose: `docker compose build --build-arg ...` — см. документацию Docker);
+- проверить DNS и файрвол VPS.
+
+---
+
 ## Если «очень нужно» всё в одном образе
 
 Только для **локальных тестов** и **никогда** для публичного registry: можно временно добавить `COPY .env secrets/ data/` в `Dockerfile`. После тестов **смените все секреты** — они считаются скомпрометированными. Для продакшена так делать не рекомендуется.
