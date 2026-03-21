@@ -1,5 +1,9 @@
 # Docker: сборка и запуск на сервере
 
+**Пошаговый деплой с GitHub на Ubuntu:** [DEPLOY_DOCKER_GITHUB.md](DEPLOY_DOCKER_GITHUB.md).
+
+---
+
 ## Безопасность: не вшивать `.env`, `secrets/` и `data/` в образ
 
 **Включать секреты и БД в слои Docker-образа небезопасно:**

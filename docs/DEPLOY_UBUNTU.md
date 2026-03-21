@@ -2,7 +2,7 @@
 
 Краткая инструкция: сервер Ubuntu, репозиторий на GitHub, секреты **не** в git.
 
-**Альтернатива:** запуск в Docker — см. [DOCKER.md](DOCKER.md) (`Dockerfile`, `docker-compose.yml`: секреты и БД монтируются с хоста, не вшиваются в образ).
+**Альтернатива:** запуск в Docker — пошагово [DEPLOY_DOCKER_GITHUB.md](DEPLOY_DOCKER_GITHUB.md); справочно [DOCKER.md](DOCKER.md) (`Dockerfile`, `docker-compose.yml`: секреты и БД монтируются с хоста).
 
 ---
 
