@@ -9,6 +9,7 @@ Telegram-бот: события из Google Calendar → напоминания 
 - [Деплой на Ubuntu с GitHub](docs/DEPLOY_UBUNTU.md) — сервер, секреты, PM2, обновления.
 - [Docker](docs/DOCKER.md) — образ без секретов, `docker compose`, тома для `.env` / `secrets` / `data`.
 - [Деплой Docker после GitHub](docs/DEPLOY_DOCKER_GITHUB.md) — Ubuntu: clone, секреты по SCP, `docker compose up`.
+- [Бот не отвечает](docs/TROUBLESHOOTING_BOT.md) — логи, токен, сеть, SOCKS в Docker.
 - [Переключение с тестового чата на боевой](docs/SWITCH_TO_PRODUCTION_CHAT.md) — пошагово: chat_id, топики, БД.
 - [Планер: Google Sheets и `/planner_week`](docs/PLANNER.md) — интеграция и недельное планирование.
 - [Улучшения продукта](docs/IMPROVEMENTS_ROADMAP.md) — идеи по надёжности, UX, безопасности.

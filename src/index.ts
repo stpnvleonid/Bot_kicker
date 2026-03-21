@@ -301,10 +301,13 @@ async function main(): Promise<void> {
   };
 
   // Telegraf на старте делает getMe для проверки токена, и при нестабильном интернете это может давать ECONNRESET.
-  // Ретраим запуск, чтобы бот поднимался при временных сетевых сбоях.
-  launchWithRetry(5).catch((e) => {
+  // Ретраим запуск; джобы ниже стартуют только после успешного polling — иначе в логах были бы Job2 без ответа в Telegram.
+  try {
+    await launchWithRetry(5);
+  } catch (e) {
     console.error('[Startup] Fatal: cannot launch bot after retries:', e);
-  });
+    process.exit(1);
+  }
 
   // Job 1: каждые 30 минут (только если календарь настроен)
   if (calendarOk) {
