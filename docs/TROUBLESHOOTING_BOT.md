@@ -7,9 +7,12 @@ cd /path/to/Bot_kicker   # каталог с docker-compose.yml
 docker compose logs bot --tail 80
 ```
 
-**Ожидаемый порядок:** `Bot version` → `Telegram API: direct` (или SOCKS) → `Connecting to Telegram` → **`Bot started (polling)`**.  
-Если после `Connecting to Telegram` тишина минутами — часто **зависший коннект через SOCKS** на `127.0.0.1` внутри контейнера; с версией кода SOCKS по умолчанию **выключен** (прямой доступ). Обновите образ и пересоздайте контейнер.  
-Если вместо успеха — **`Fatal: cannot launch bot after retries`** — сеть/токен/прокси.
+**Ожидаемый порядок:** `Bot version` → `Telegram API: direct` (или SOCKS) → `Connecting to Telegram (getMe)...` → **`Telegram OK @your_bot`** → **`Bot started (polling) — registering background jobs...`** → строки `Cron: Job2...` / `Worker: Job3...` → `Starting long polling...`.
+
+В Telegraf 4 **`await bot.launch()` при long polling никогда не завершается** (внутри бесконечный `getUpdates`). В этом проекте после проверки токена (`getMe`) регистрируются cron/воркер, затем `launch()` запускается без `await`. Если после `getMe` тишина — сеть/токен; если есть `Telegram OK`, но нет cron — смотрите актуальный код `src/index.ts`.
+
+Если после `Connecting to Telegram` тишина минутами — часто **зависший коннект** (SOCKS на `127.0.0.1` внутри контейнера или блокировка `api.telegram.org` на хосте). SOCKS по умолчанию **выключен**; обновите образ и пересоздайте контейнер.  
+Если вместо успеха — **`Fatal: cannot connect to Telegram after retries`** — сеть/токен/прокси.
 
 ## 2. Токен
 

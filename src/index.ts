@@ -289,30 +289,40 @@ async function main(): Promise<void> {
   bot.on('photo', handlePlannerExamPhoto);
 
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-  const launchWithRetry = async (maxAttempts: number): Promise<void> => {
+
+  /**
+   * Важно: `bot.launch()` при long polling **никогда не резолвится** — внутри бесконечный цикл getUpdates.
+   * Поэтому нельзя `await bot.launch()` и ждать строку «бот запущен» — код после await никогда не выполнится.
+   * Схема: getMe + deleteWebhook (с ретраями) → cron/воркер → `void bot.launch().catch(...)`.
+   */
+  const dropPendingUpdates =
+    process.env.TELEGRAM_DROP_PENDING_UPDATES === '1' || process.env.TELEGRAM_DROP_PENDING_UPDATES === 'true';
+
+  const connectTelegramWithRetry = async (maxAttempts: number): Promise<void> => {
     let lastErr: unknown = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        await bot.launch();
-        console.log('Bot started (polling)');
+        bot.botInfo = await bot.telegram.getMe();
+        const u = bot.botInfo.username ?? '';
+        console.log('[Startup] Telegram OK', u ? `@${u}` : '(no username)');
         return;
       } catch (e) {
         lastErr = e;
         const delayMs = Math.min(10000, 500 * attempt * attempt); // ~0.5s, 2s, 4.5s, 8s, 10s
-        console.error('[Startup] bot.launch failed. Attempt', attempt, 'of', maxAttempts, '— retry in', delayMs, 'ms:', e);
+        console.error('[Startup] getMe failed. Attempt', attempt, 'of', maxAttempts, '— retry in', delayMs, 'ms:', e);
         await sleep(delayMs);
       }
     }
     throw lastErr;
   };
 
-  // Telegraf на старте делает getMe для проверки токена, и при нестабильном интернете это может давать ECONNRESET.
-  // Ретраим запуск; джобы ниже стартуют только после успешного polling — иначе в логах были бы Job2 без ответа в Telegram.
+  // Ретраим только getMe; deleteWebhook + long polling делает `launch()` (его нельзя await — см. ниже).
   try {
-    console.log('[Startup] Connecting to Telegram (getMe + long polling)...');
-    await launchWithRetry(5);
+    console.log('[Startup] Connecting to Telegram (getMe)...');
+    await connectTelegramWithRetry(5);
+    console.log('[Startup] Bot started (polling) — registering background jobs...');
   } catch (e) {
-    console.error('[Startup] Fatal: cannot launch bot after retries:', e);
+    console.error('[Startup] Fatal: cannot connect to Telegram after retries:', e);
     process.exit(1);
   }
 
@@ -392,6 +402,13 @@ async function main(): Promise<void> {
     runCleanupArchiveJob().catch((e) => console.error('Job4:', e));
   });
   console.log('Cron: Job4 cleanup daily at 03:00');
+
+  // Long polling не await — `launch()` внутри ждёт бесконечный цикл getUpdates и никогда не резолвится.
+  console.log('[Startup] Starting long polling (deleteWebhook + getUpdates loop)...');
+  void bot.launch({ dropPendingUpdates: dropPendingUpdates }).catch((e) => {
+    console.error('[Startup] Fatal: Telegram polling stopped with error:', e);
+    process.exit(1);
+  });
 
   const shutdown = (reason: string): void => {
     console.log('[Shutdown] Received', reason, '- stopping bot and background jobs...');
