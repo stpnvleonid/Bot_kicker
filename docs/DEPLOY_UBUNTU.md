@@ -153,7 +153,9 @@ pm2 stop bot-kicker
 ```bash
 cd /opt/bot-kicker
 pm2 stop bot-kicker
-git pull
+git fetch origin
+git checkout main
+git pull origin main
 npm ci
 npm run build
 npm run migrate

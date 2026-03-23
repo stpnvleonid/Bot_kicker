@@ -171,7 +171,9 @@ docker compose logs -f bot
 
 ```bash
 cd /opt/bot-kicker/Bot_kicker
-git pull
+git fetch origin
+git checkout main
+git pull origin main
 docker compose build
 docker compose up -d
 ```
