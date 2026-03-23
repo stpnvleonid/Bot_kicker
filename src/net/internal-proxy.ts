@@ -80,9 +80,24 @@ function isLoopbackHostname(host: string): boolean {
   return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]';
 }
 
+function isRunningInDocker(): boolean {
+  // Standard container marker file.
+  if (typeof process !== 'undefined' && typeof process.cwd === 'function') {
+    try {
+      // eslint-disable-next-line no-undef
+      const fs = require('node:fs') as typeof import('node:fs');
+      if (fs.existsSync('/.dockerenv')) return true;
+    } catch {
+      // ignore
+    }
+  }
+  const cgroup = process.env.CONTAINER ?? process.env.DOCKER_CONTAINER ?? '';
+  return cgroup === '1' || cgroup.toLowerCase() === 'docker';
+}
+
 /**
  * SOCKS включён, но нет ни одного URL — иначе раньше подставлялся 127.0.0.1:1080 и ломал Docker.
- * Также запрещаем 127.0.0.1/localhost в URL в проде/Docker (частая ошибка в .env), если нет TELEGRAM_SOCKS_ALLOW_LOOPBACK=1.
+ * Также запрещаем 127.0.0.1/localhost в URL в Docker (частая ошибка в .env), если нет TELEGRAM_SOCKS_ALLOW_LOOPBACK=1.
  */
 export function validateTelegramSocksProxyEnv(): void {
   if (!isTelegramProxyEnabled()) return;
@@ -102,6 +117,7 @@ export function validateTelegramSocksProxyEnv(): void {
     process.env.TELEGRAM_SOCKS_ALLOW_LOOPBACK === '1' ||
     process.env.TELEGRAM_SOCKS_ALLOW_LOOPBACK === 'true';
   if (allowLoopback) return;
+  if (!isRunningInDocker()) return;
 
   for (const raw of urls) {
     const host = socksUrlHostname(raw);
