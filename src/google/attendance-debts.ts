@@ -22,6 +22,8 @@ export type StudentDebt = {
   fullName: string;
   telegramUsername: string | null;
   debts: StudentDebtItem[];
+  /** false — ученик есть в БД, но не выбрал этот предмет в /subjects (раньше из‑за этого строка могла не сопоставляться). */
+  hasSubjectInBot: boolean;
 };
 
 export type SubjectDebtResult = {
@@ -33,6 +35,8 @@ export type SubjectDebtResult = {
     matchedRows: number;
     unmatchedRows: number;
     totalDebts: number;
+    /** Сопоставлены по ФИО, но в /subjects нет этого предмета. */
+    matchedWithoutSubjectInBot: number;
   };
 };
 
@@ -247,6 +251,17 @@ function scoreCandidate(sheetTokens: string[], dbTokens: string[]): number {
   return matched / Math.max(sheetTokens.length, dbTokens.length);
 }
 
+function normalizedDbFullNameVariants(s: DbStudent): string[] {
+  const last = (s.last_name ?? '').trim();
+  const first = (s.first_name ?? '').trim();
+  const forward = normalizeName(`${last} ${first}`.trim());
+  const swapped = normalizeName(`${first} ${last}`.trim());
+  if (forward && swapped && forward !== swapped) return [forward, swapped];
+  if (forward) return [forward];
+  if (swapped) return [swapped];
+  return [];
+}
+
 function matchStudentByFio(sheetName: string, students: DbStudent[]): DbStudent | null {
   const parts = sheetLastFirstForMatch(sheetName);
   if (!parts) return null;
@@ -255,9 +270,7 @@ function matchStudentByFio(sheetName: string, students: DbStudent[]): DbStudent 
   const sheetNormFull = normalizeName(sFirst ? `${sLast} ${sFirst}` : sLast);
   if (!sheetNormFull) return null;
 
-  const exact = students.find(
-    (s) => normalizeName(`${s.last_name} ${s.first_name}`.trim()) === sheetNormFull
-  );
+  const exact = students.find((s) => normalizedDbFullNameVariants(s).some((v) => v === sheetNormFull));
   if (exact) return exact;
 
   const sheetTokens = sFirst
@@ -268,8 +281,9 @@ function matchStudentByFio(sheetName: string, students: DbStudent[]): DbStudent 
   let bestScore = 0;
   let secondScore = 0;
   for (const s of students) {
-    const dbTokens = splitNameTokens(`${s.last_name} ${s.first_name}`);
-    const score = scoreCandidate(sheetTokens, dbTokens);
+    const dbForward = splitNameTokens(`${s.last_name} ${s.first_name}`);
+    const dbSwapped = splitNameTokens(`${s.first_name} ${s.last_name}`);
+    const score = Math.max(scoreCandidate(sheetTokens, dbForward), scoreCandidate(sheetTokens, dbSwapped));
     if (score > bestScore) {
       secondScore = bestScore;
       bestScore = score;
@@ -279,9 +293,13 @@ function matchStudentByFio(sheetName: string, students: DbStudent[]): DbStudent 
     }
   }
   if (!best) return null;
-  if (bestScore < 0.75) return null;
-  if (bestScore - secondScore < 0.2) return null;
-  return best;
+
+  const uniqueWinner = secondScore === 0;
+  const margin = bestScore - secondScore;
+  if (uniqueWinner && bestScore >= 0.65) return best;
+  if (bestScore >= 0.75 && margin >= 0.2) return best;
+  if (bestScore >= 0.85 && margin >= 0.12) return best;
+  return null;
 }
 
 export async function getAttendanceDebtsBySubject(subjectKey: string, subjectLabel: string): Promise<SubjectDebtResult> {
@@ -307,14 +325,18 @@ export async function getAttendanceDebtsBySubject(subjectKey: string, subjectLab
   const parsedRows = parsed.students;
 
   const db = getDb();
+  // Сверяем ФИО со всеми учениками в БД. Ограничение только по /subjects раньше отрезало тех, кто не нажал предмет — они «не сопоставлялись».
   const dbStudents = db
-    .prepare(
-      `SELECT s.id, s.first_name, s.last_name, s.telegram_username
-       FROM students s
-       JOIN student_subjects ss ON ss.student_id = s.id
-       WHERE ss.subject_key = ?`
-    )
-    .all(subjectKey) as DbStudent[];
+    .prepare(`SELECT id, first_name, last_name, telegram_username FROM students`)
+    .all() as DbStudent[];
+
+  const subjectStudentIds = new Set(
+    (
+      db.prepare(`SELECT student_id FROM student_subjects WHERE subject_key = ?`).all(subjectKey) as Array<{
+        student_id: number;
+      }>
+    ).map((r) => r.student_id)
+  );
 
   const byStudent = new Map<number, StudentDebt>();
   let unmatchedRows = 0;
@@ -329,6 +351,7 @@ export async function getAttendanceDebtsBySubject(subjectKey: string, subjectLab
       continue;
     }
     totalDebts += debts.length;
+    const hasSubjectInBot = subjectStudentIds.has(matched.id);
     const existing = byStudent.get(matched.id);
     if (existing) {
       existing.debts.push(...debts);
@@ -339,10 +362,12 @@ export async function getAttendanceDebtsBySubject(subjectKey: string, subjectLab
       fullName: `${matched.last_name} ${matched.first_name}`.trim(),
       telegramUsername: matched.telegram_username,
       debts: [...debts],
+      hasSubjectInBot,
     });
   }
 
   const students = Array.from(byStudent.values()).sort((a, b) => b.debts.length - a.debts.length || a.fullName.localeCompare(b.fullName, 'ru'));
+  const matchedWithoutSubjectInBot = students.filter((s) => !s.hasSubjectInBot).length;
   return {
     subjectKey,
     subjectLabel,
@@ -352,6 +377,7 @@ export async function getAttendanceDebtsBySubject(subjectKey: string, subjectLab
       matchedRows: students.length,
       unmatchedRows,
       totalDebts,
+      matchedWithoutSubjectInBot,
     },
   };
 }

@@ -346,8 +346,9 @@ function getAdminHelpSectionText(sectionId: string): { title: string; lines: str
       return {
         title: 'Долги по «Посещаемости» (таблица только читается)',
         lines: [
-          '/debts <предмет> — отчёт по ячейкам «Не сдал» (ученики из БД, выбравшие предмет в /subjects)',
-          'Сверка с БД: фамилия и имя из таблицы; отчество в строке ФИО не учитывается.',
+          '/debts <предмет> — отчёт по ячейкам «Не сдал»; сопоставление со всеми учениками в БД по фамилии и имени.',
+          'Если предмет не выбран в /subjects — человек всё равно попадёт в отчёт с пометкой [нет в /subjects].',
+          'Отчество в таблице не участвует в сверке. Не сопоставляется — нет в БД, опечатка в ФИО или неоднозначное совпадение.',
           '',
           'Ниже — быстрый выбор предмета.',
         ],
@@ -2036,6 +2037,11 @@ async function sendDebtsReport(ctx: Context, subjectKey: string, opts: { announc
       `Учеников во вкладке: ${report.stats.totalRows}`,
       `Сопоставлено с БД: ${report.stats.matchedRows}`,
       `Не сопоставлено с БД: ${report.stats.unmatchedRows}`,
+      ...(report.stats.matchedWithoutSubjectInBot > 0
+        ? [
+            `Без предмета в /subjects (но ФИО найдено): ${report.stats.matchedWithoutSubjectInBot}`,
+          ]
+        : []),
       `Всего долгов «Не сдал»: ${report.stats.totalDebts}`,
       '',
     ].join('\n');
@@ -2049,7 +2055,8 @@ async function sendDebtsReport(ctx: Context, subjectKey: string, opts: { announc
       const assignments = s.debts.map((d) => d.assignment);
       const debtList = assignments.join(', ');
       const compactTypes = formatDebtTypeCompact(assignments);
-      lines.push(`${i + 1}. ${s.fullName}${s.telegramUsername ? ` (@${s.telegramUsername})` : ''} — ${s.debts.length}`);
+      const subjHint = s.hasSubjectInBot ? '' : ' [нет в /subjects]';
+      lines.push(`${i + 1}. ${s.fullName}${s.telegramUsername ? ` (@${s.telegramUsername})` : ''}${subjHint} — ${s.debts.length}`);
       lines.push(`   Типы: ${compactTypes}`);
       lines.push(`   ${debtList}`);
     }
