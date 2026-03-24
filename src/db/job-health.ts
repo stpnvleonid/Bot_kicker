@@ -14,9 +14,13 @@ function normalizeErrorMessage(err: unknown): string {
 export function markJobSuccess(job: JobHealthName): void {
   const db = getDb();
   db.prepare(
-    `INSERT OR REPLACE INTO job_health
-     (job_name, last_success_at, last_error_at, last_error_message, updated_at)
-     VALUES (?, datetime('now'), NULL, NULL, datetime('now'))`
+    `INSERT INTO job_health (job_name, last_success_at, last_error_at, last_error_message, updated_at)
+     VALUES (?, datetime('now'), NULL, NULL, datetime('now'))
+     ON CONFLICT(job_name) DO UPDATE SET
+       last_success_at = excluded.last_success_at,
+       last_error_at = NULL,
+       last_error_message = NULL,
+       updated_at = excluded.updated_at`
   ).run(job);
 }
 
@@ -24,9 +28,12 @@ export function markJobError(job: JobHealthName, err: unknown): void {
   const db = getDb();
   const message = normalizeErrorMessage(err);
   db.prepare(
-    `INSERT OR REPLACE INTO job_health
-     (job_name, last_success_at, last_error_at, last_error_message, updated_at)
-     VALUES (?, COALESCE((SELECT last_success_at FROM job_health WHERE job_name = ?), NULL), datetime('now'), ?, datetime('now'))`
-  ).run(job, job, message);
+    `INSERT INTO job_health (job_name, last_success_at, last_error_at, last_error_message, updated_at)
+     VALUES (?, NULL, datetime('now'), ?, datetime('now'))
+     ON CONFLICT(job_name) DO UPDATE SET
+       last_error_at = excluded.last_error_at,
+       last_error_message = excluded.last_error_message,
+       updated_at = excluded.updated_at`
+  ).run(job, message);
 }
 

@@ -57,7 +57,3 @@ Desktop.ini
 # Coverage (если появится)
 coverage/
 .nyc_output/
-
-
-# Docs
-/docs/INTERNAL_TELEGRAM_PROXY_ARCHITECTURE.md

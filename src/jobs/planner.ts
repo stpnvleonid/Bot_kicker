@@ -48,27 +48,30 @@ export function getYesterdayMoscow(): string {
 
 export function isPlannerActiveToday(): boolean {
   // Планер не работает по воскресеньям.
-  const now = new Date();
-  const day = now.getDay(); // 0 = Sunday
-  return day !== 0;
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    timeZone: PLANNER_TZ,
+    weekday: 'short',
+  }).format(new Date());
+  return weekday !== 'Sun';
 }
 
 /** Утренний опрос: предложить студентам запланировать задачи. */
 export function runPlannerMorningJob(): void {
   const db = getDb();
-  const taskDate = todayIsoDate();
+  const taskDate = getDateInMoscow();
 
   if (!isPlannerActiveToday()) {
     console.log('[Planner] Morning: planner disabled on Sunday, skipping.');
     return;
   }
 
-  // Студенты с включённым планером и ЛС.
+  // Студенты с включённым планером (исключение: утренний инвайт отправляем даже при notify_dm=0,
+  // чтобы пользователь гарантированно получил точку входа в планирование дня).
   const students = db
     .prepare(
       `SELECT id, telegram_user_id, first_name
        FROM students
-       WHERE planner_enabled = 1 AND notify_dm = 1 AND dm_blocked = 0`
+       WHERE planner_enabled = 1 AND dm_blocked = 0`
     )
     .all() as Array<{ id: number; telegram_user_id: number; first_name: string }>;
 
@@ -96,7 +99,7 @@ export function runPlannerMorningJob(): void {
 /** Админский перезапуск утреннего опроса: только для тех, у кого на дату ещё нет задач. */
 export function runPlannerMorningRemind(taskDate?: string): { date: string; count: number } {
   const db = getDb();
-  const targetDate = taskDate || todayIsoDate();
+  const targetDate = taskDate || getDateInMoscow();
 
   const students = db
     .prepare(
@@ -135,7 +138,7 @@ export function runPlannerMorningRemind(taskDate?: string): { date: string; coun
 /** Вечерний опрос: отправить студентам экран «Отметь выполненные задачи на сегодня». */
 export function runPlannerEveningJob(): void {
   const db = getDb();
-  const taskDate = todayIsoDate();
+  const taskDate = getDateInMoscow();
 
   if (!isPlannerActiveToday()) {
     console.log('[Planner] Evening: planner disabled on Sunday, skipping.');
@@ -479,7 +482,7 @@ export async function runPlannerFullExportJobForDate(taskDate: string): Promise<
 }
 
 export async function runPlannerExportJob(): Promise<void> {
-  const taskDate = todayIsoDate();
+  const taskDate = getDateInMoscow();
   return runPlannerExportJobForDate(taskDate);
 }
 

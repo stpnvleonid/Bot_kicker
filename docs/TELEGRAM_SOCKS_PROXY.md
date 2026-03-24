@@ -3,7 +3,9 @@
 ## Важно про код
 
 - Раньше SOCKS применялся только к **`global fetch`**. **Telegraf** ходит в API через **node-fetch** с полем **`telegram.agent`** — без него прокси к `getMe` **не использовался**.
-- Сейчас при `TELEGRAM_SOCKS_PROXY_ENABLED=1` и заданных URL создаётся **SOCKS-агент и передаётся в Telegraf**.
+- Сейчас при `TELEGRAM_SOCKS_PROXY_ENABLED=1` и заданных URL создаются **SOCKS-агенты** и передаются в Telegraf.
+- На старте (`getMe`) бот перебирает прокси в порядке из `TELEGRAM_SOCKS_PROXY_URLS` (1, 2, 3, ...), поэтому при падении первого может подняться через следующий.
+- Для `global fetch` остаётся отдельный fallback-механизм (`proxy -> direct`) только для `api.telegram.org`.
 
 ## Ошибка `ECONNREFUSED 127.0.0.1:1080`
 
@@ -57,7 +59,7 @@ TELEGRAM_SOCKS_PROXY_URLS=socks5h://:PASSWORD@HOST:443
    docker compose logs bot --tail 40
    ```
 
-   Ожидается: `Telegraf: SOCKS agent attached` → `Telegram OK @your_bot`.
+   Ожидается: `Telegraf: SOCKS agents attached (priority order)` → `getMe via SOCKS 1/N` (или 2/N, если первый упал) → `Telegram OK @your_bot`.
 
 ## Ошибка `FetchError: network timeout` / `request-timeout` к `api.telegram.org`
 

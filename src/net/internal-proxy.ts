@@ -166,6 +166,17 @@ export async function getTelegramNodeFetchAgent(): Promise<HttpAgent | undefined
   return first as HttpAgent | undefined;
 }
 
+/** Полный список SOCKS-агентов в порядке приоритета из env. */
+export async function getTelegramNodeFetchAgents(): Promise<HttpAgent[]> {
+  const agents = await getInternalProxyAgentsAsync();
+  return agents as unknown as HttpAgent[];
+}
+
+/** Полный список URL прокси (для логов и диагностики порядка перебора). */
+export function getTelegramSocksProxyUrlsForLogs(): string[] {
+  return getTelegramSocksProxyUrls();
+}
+
 function isLikelyProxyNetworkError(err: unknown): boolean {
   const msg = String((err as any)?.message ?? err ?? '');
   const code = String((err as any)?.code ?? (err as any)?.errno ?? '');

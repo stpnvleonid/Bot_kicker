@@ -8,6 +8,8 @@ const envSchema = z.object({
   GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
   PLANNER_SHEET_ID: z.string().optional(),
   PLANNER_SHEET_RANGE: z.string().optional().default('Sheet1!A:D'),
+  ATTENDANCE_SHEET_ID: z.string().optional(),
+  ATTENDANCE_SHEET_TAB: z.string().optional().default('Посещаемость'),
   TZ: z.string().optional().default('UTC'),
   DEBUG: z.string().optional().transform((v) => v === '1' || v?.toLowerCase() === 'true'),
 });

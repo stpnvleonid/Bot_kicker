@@ -11,7 +11,8 @@ import { getDb, closeDb } from './db';
 import { runMigrations } from './db/migrate';
 import {
   enableFetchProxyFallback,
-  getTelegramNodeFetchAgent,
+  getTelegramNodeFetchAgents,
+  getTelegramSocksProxyUrlsForLogs,
   isTelegramProxyEnabled,
   validateTelegramSocksProxyEnv,
 } from './net/internal-proxy';
@@ -32,6 +33,7 @@ import {
   handleSubscribers,
   handleSelect,
   handlePush,
+  handleDebts,
   handlePushReport,
   handlePushCallback,
   handleConfirmReminder,
@@ -166,15 +168,19 @@ async function main(): Promise<void> {
   enableFetchProxyFallback();
 
   // Telegraf → node-fetch → свой agent; global fetch не используется для Bot API.
-  const telegramHttpAgent = await getTelegramNodeFetchAgent();
-  if (telegramHttpAgent) {
-    console.log('[Startup] Telegraf: SOCKS agent attached (api.telegram.org via proxy)');
-  }
-
+  // Берём список агентов в порядке приоритета из TELEGRAM_SOCKS_PROXY_URLS и перебираем на старте.
+  const telegramHttpAgents = await getTelegramNodeFetchAgents();
+  const telegramProxyUrls = getTelegramSocksProxyUrlsForLogs();
   const bot = new Telegraf(
     config.BOT_TOKEN,
-    telegramHttpAgent ? { telegram: { agent: telegramHttpAgent } } : {}
+    telegramHttpAgents.length ? { telegram: { agent: telegramHttpAgents[0] as any } } : {}
   );
+  if (telegramHttpAgents.length) {
+    const mapped = telegramProxyUrls.length
+      ? telegramProxyUrls.map((u, i) => `${i + 1}) ${u}`).join(' | ')
+      : `${telegramHttpAgents.length} item(s)`;
+    console.log('[Startup] Telegraf: SOCKS agents attached (priority order):', mapped);
+  }
 
   // Хэндлы для фоновых задач, чтобы корректно останавливать их при завершении процесса.
   let job1CalendarSync: cron.ScheduledTask | null = null;
@@ -273,6 +279,7 @@ async function main(): Promise<void> {
   bot.command('subscribers', handleSubscribers);
   bot.command('select', handleSelect);
   bot.command('push', handlePush);
+  bot.command('debts', handleDebts);
   bot.command('push_report', handlePushReport);
   bot.command('groups', handleGroups);
   bot.command('events', handleEvents);
@@ -355,6 +362,17 @@ async function main(): Promise<void> {
     let lastErr: unknown = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
+        if (telegramHttpAgents.length) {
+          const idx = (attempt - 1) % telegramHttpAgents.length;
+          // node-fetch path inside Telegraf reads this agent option.
+          (bot.telegram as any).options.agent = telegramHttpAgents[idx];
+          const proxyLabel = telegramProxyUrls[idx] ?? `#${idx + 1}`;
+          console.log(
+            '[Startup] getMe via SOCKS',
+            `${idx + 1}/${telegramHttpAgents.length}:`,
+            proxyLabel
+          );
+        }
         bot.botInfo = await bot.telegram.getMe();
         const u = bot.botInfo.username ?? '';
         console.log('[Startup] Telegram OK', u ? `@${u}` : '(no username)');
@@ -403,10 +421,10 @@ async function main(): Promise<void> {
   // Job 5: планер учебных задач — 10:00 и 20:00 (см. comments в 2.txt)
   job5Morning = cron.schedule('0 10 * * *', () => {
     runPlannerMorningJob();
-  });
+  }, { timezone: 'Europe/Moscow' });
   job5Evening = cron.schedule('0 20 * * *', () => {
     runPlannerEveningJob();
-  });
+  }, { timezone: 'Europe/Moscow' });
   // 20:00 МСК: напоминание обновить статус задач (экспорт не запускаем)
   job5Remind = cron.schedule('0 20 * * *', () => {
     runPlannerEndOfDayReminder();

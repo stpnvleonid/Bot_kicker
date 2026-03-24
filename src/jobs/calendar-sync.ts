@@ -347,6 +347,10 @@ export async function runCalendarSyncJob(options?: { force?: boolean }): Promise
         // Если синхронизируемся по окну (без sync_token): события, которые были у нас как active,
         // но больше не приходят из Google в том же окне, считаем удалёнными в календаре и помечаем как cancelled.
         if (!cfg.sync_token) {
+          const fetchedIdsArr = Array.from(fetchedIds);
+          const notInClause = fetchedIdsArr.length
+            ? `AND google_event_id NOT IN (${fetchedIdsArr.map(() => '?').join(',')})`
+            : '';
           const missing = db
             .prepare(
               `SELECT id, google_event_id
@@ -354,13 +358,13 @@ export async function runCalendarSyncJob(options?: { force?: boolean }): Promise
                WHERE calendar_config_id = ?
                  AND status = 'active'
                  AND start_at BETWEEN ? AND ?
-                 AND google_event_id NOT IN (${events.length ? events.filter(e => e.id).map(() => '?').join(',') : "''"})`
+                 ${notInClause}`
             )
             .all(
               cfg.id,
               timeMin,
               timeMax,
-              ...Array.from(fetchedIds)
+              ...fetchedIdsArr
             ) as Array<{ id: number; google_event_id: string }>;
 
           if (missing.length) {

@@ -14,6 +14,9 @@ docker compose logs bot --tail 80
 Если после `Connecting to Telegram` тишина минутами — часто **зависший коннект** (SOCKS на `127.0.0.1` внутри контейнера или блокировка `api.telegram.org` на хосте). SOCKS по умолчанию **выключен**; обновите образ и пересоздайте контейнер.  
 Если вместо успеха — **`Fatal: cannot connect to Telegram after retries`** — сеть/токен/прокси.
 
+Если включено несколько прокси в `TELEGRAM_SOCKS_PROXY_URLS`, в startup-логах появятся попытки:
+`getMe via SOCKS 1/N`, `getMe via SOCKS 2/N`, ... — это нормальный перебор до рабочего прокси.
+
 ## 2. Токен
 
 - В `.env` на сервере **`BOT_TOKEN`** тот же, что в [@BotFather](https://t.me/BotFather).

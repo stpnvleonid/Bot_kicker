@@ -13,13 +13,14 @@ import { getConfig } from '../config';
 import { runCalendarSyncJob } from '../jobs/calendar-sync';
 import {
   PLANNER_MAX_TASKS,
-  todayIsoDate,
+  getDateInMoscow,
   runPlannerMorningRemind,
   runPlannerFullExportJobForDate,
   runPlannerEveningJobForDate,
 } from '../jobs/planner';
 import { selectPendingExamSubmissionsForStudent } from '../jobs/planner-exams';
 import { parseRuDateFromCaption, parseRuDdMmToIso } from '../utils/parse-ru-dd-mm';
+import { getAttendanceDebtsBySubject } from '../google/attendance-debts';
 
 export const BOT_VERSION = 'planner-back-button-v1';
 
@@ -33,6 +34,8 @@ const pendingPushByAdmin = new Map<number, { selectionId: number; text: string }
 const plannerEditingTask = new Map<number, { taskId: number; studentId: number; taskDate: string }>();
 /** Состояние «добавляю новую задачу»: telegram_user_id → { studentId, taskDate } */
 const plannerAddingTask = new Map<number, { studentId: number; taskDate: string }>();
+/** Состояние «ожидаю ФИО после /start»: telegram_user_id → { studentId } */
+const startAwaitingFio = new Map<number, { studentId: number }>();
 
 /**
  * Mandatory "exams" evidence flow:
@@ -121,7 +124,7 @@ async function deleteCallbackMessage(ctx: Context): Promise<void> {
 }
 
 function plannerToday(): string {
-  return todayIsoDate();
+  return getDateInMoscow();
 }
 
 async function buildMandatoryExamsPreview(studentId: number, taskDateIso: string): Promise<string[]> {
@@ -507,14 +510,15 @@ export async function handleStart(ctx: Context): Promise<void> {
 
   const existedBefore = !!db.prepare('SELECT 1 FROM students WHERE telegram_user_id = ?').get(uid);
 
-  // Всегда обновляем/создаём запись студента (и в ЛС, и в группе)
+  // Всегда обновляем/создаём запись студента (и в ЛС, и в группе),
+  // но ФИО существующего студента не перезаписываем данными из Telegram-профиля.
   db.prepare(
     `INSERT INTO students (telegram_user_id, telegram_username, first_name, last_name)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(telegram_user_id) DO UPDATE SET
        telegram_username = excluded.telegram_username,
-       first_name = excluded.first_name,
-       last_name = excluded.last_name,
+       first_name = students.first_name,
+       last_name = students.last_name,
        updated_at = datetime('now')`
   ).run(uid, username, firstName, lastName);
 
@@ -539,8 +543,8 @@ export async function handleStart(ctx: Context): Promise<void> {
     // показываем только на первом `/start` для нового студента, если предметы ещё не выбраны.
     if (!existedBefore) {
       const studentId = db
-        .prepare('SELECT id FROM students WHERE telegram_user_id = ?')
-        .get(uid) as { id: number } | undefined;
+        .prepare('SELECT id, first_name, last_name FROM students WHERE telegram_user_id = ?')
+        .get(uid) as { id: number; first_name: string | null; last_name: string | null } | undefined;
       if (studentId) {
         const hasSubjects = !!db
           .prepare(
@@ -549,6 +553,17 @@ export async function handleStart(ctx: Context): Promise<void> {
           .get(studentId.id);
         if (!hasSubjects) {
           await ctx.reply('Чтобы получать уведомления по предметам, выберите их: нажмите /subjects и отметьте нужные.');
+        }
+
+        // ФИО запрашиваем только один раз — при первом /start и только если Telegram не дал полные данные.
+        const storedFirst = (studentId.first_name ?? '').trim();
+        const storedLast = (studentId.last_name ?? '').trim();
+        if (!storedFirst || !storedLast) {
+          startAwaitingFio.set(uid, { studentId: studentId.id });
+          await ctx.reply(
+            'Перед первым использованием планера укажите ФИО одним сообщением в формате:\n`Фамилия Имя`.\n\n' +
+              'Это нужно для корректного сопоставления в таблице планирования.'
+          );
         }
       }
     }
@@ -761,18 +776,6 @@ export async function handlePlannerCount(ctx: Context): Promise<void> {
     const studentId = await getOrCreateStudentId(ctx);
     if (!studentId) {
       await ctx.answerCbQuery('Сначала нажмите /start');
-      return;
-    }
-    const studentRow = db
-      .prepare('SELECT last_name FROM students WHERE id = ?')
-      .get(studentId) as { last_name: string | null } | undefined;
-    const plannerLastName = (studentRow?.last_name ?? '').trim();
-    if (!plannerLastName) {
-      await ctx.answerCbQuery().catch(() => {});
-      await ctx.reply(
-        'Перед первым использованием планера напишите, пожалуйста, свою фамилию **точно так же, как она указана в таблице по планированию**.\n\n' +
-          'Отправьте фамилию отдельным сообщением (без команд), а потом ещё раз выберите количество задач.'
-      );
       return;
     }
     const taskDate = plannerToday();
@@ -1685,6 +1688,45 @@ export async function handlePlannerText(ctx: Context): Promise<void> {
   const studentId = await getOrCreateStudentId(ctx);
   if (!studentId) return;
 
+  const awaitingFio = startAwaitingFio.get(ctx.from.id);
+  if (awaitingFio) {
+    if (text === '/cancel') {
+      startAwaitingFio.delete(ctx.from.id);
+      await ctx.reply('Ок, отменил ввод ФИО. Нажмите /planner, когда будете готовы.');
+      return;
+    }
+    if (text.startsWith('/')) return;
+
+    const fio = text.replace(/\s+/g, ' ').trim();
+    const parts = fio.split(' ');
+    if (parts.length < 2) {
+      await ctx.reply('Пожалуйста, отправьте ФИО в формате: `Фамилия Имя` (минимум два слова).');
+      return;
+    }
+    const lastName = parts[0] ?? '';
+    const firstName = parts.slice(1).join(' ').trim();
+    const hasLetters = /[A-Za-zА-Яа-яЁё]/.test(fio);
+    if (!hasLetters) {
+      await ctx.reply('Похоже, это не ФИО. Пример: `Иванов Иван`.');
+      return;
+    }
+    if (!lastName || !firstName) {
+      await ctx.reply('Не удалось распознать ФИО. Пример: `Иванов Иван`.');
+      return;
+    }
+
+    db.prepare(
+      `UPDATE students
+       SET first_name = ?, last_name = ?, updated_at = datetime('now')
+       WHERE id = ?`
+    ).run(firstName, lastName, awaitingFio.studentId);
+    startAwaitingFio.delete(ctx.from.id);
+    await ctx.reply(
+      'ФИО сохранено. Спасибо!'
+    );
+    return;
+  }
+
   // Режим «редактирую текст задачи»: обновляем задачу или /cancel
   const editing = plannerEditingTask.get(ctx.from.id);
   if (editing) {
@@ -1750,20 +1792,6 @@ export async function handlePlannerText(ctx: Context): Promise<void> {
 
   // Команды (кроме /skip) не перехватываем.
   if (text.startsWith('/') && text !== '/skip') return;
-
-  // Если у студента ещё не сохранена фамилия для планера — первое текстовое сообщение без команды трактуем как фамилию.
-  const studentRow = db
-    .prepare('SELECT last_name FROM students WHERE id = ?')
-    .get(studentId) as { last_name: string | null } | undefined;
-  const plannerLastName = (studentRow?.last_name ?? '').trim();
-  if (!plannerLastName && !text.startsWith('/')) {
-    db.prepare("UPDATE students SET last_name = ?, updated_at = datetime('now') WHERE id = ?").run(text, studentId);
-    await ctx.reply(
-      'Фамилию для планера записал. Пожалуйста, используйте её строго в том виде, как она указана в таблице по планированию.\n\n' +
-        'Теперь ещё раз нажмите кнопку планера и выберите количество задач.'
-    );
-    return;
-  }
 
   const taskDate = plannerToday();
   const session = db
@@ -1952,14 +1980,113 @@ export async function handleLinkGroup(ctx: Context): Promise<void> {
 }
 
 const SUBJECT_KEYS = Object.keys(SUBJECT_TOPIC_NAMES);
+const SUBJECT_ALIASES: Record<string, string> = {
+  русский: 'russian',
+  русскийязык: 'russian',
+  russian: 'russian',
+  физика: 'physics',
+  physics: 'physics',
+  общество: 'society',
+  обществознание: 'society',
+  society: 'society',
+  информатика: 'informatics',
+  инфа: 'informatics',
+  informatics: 'informatics',
+  english: 'english',
+  английский: 'english',
+  математика: 'math',
+  math: 'math',
+};
 
 function resolveSubjectKey(input: string): string | null {
   const lower = input.trim().toLowerCase();
   if (SUBJECT_TOPIC_NAMES[lower]) return lower;
+  const compact = lower.replace(/\s+/g, '');
+  const alias = SUBJECT_ALIASES[compact] ?? SUBJECT_ALIASES[lower];
+  if (alias) return alias;
   for (const [key, name] of Object.entries(SUBJECT_TOPIC_NAMES)) {
     if (name.toLowerCase() === lower) return key;
   }
   return null;
+}
+
+function debtTypeFromAssignment(assignment: string): string {
+  const normalized = assignment.replace(/\s+/g, ' ').trim();
+  const left = normalized.split('—')[0]?.trim() ?? normalized;
+  return left || 'Другое';
+}
+
+function formatDebtTypeCompact(assignments: string[]): string {
+  if (!assignments.length) return '—';
+  const counts = new Map<string, number>();
+  for (const a of assignments) {
+    const t = debtTypeFromAssignment(a);
+    counts.set(t, (counts.get(t) ?? 0) + 1);
+  }
+  const items = Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ru'));
+  return items.map(([t, c]) => `${t}: ${c}`).join(', ');
+}
+
+export async function handleDebts(ctx: Context): Promise<void> {
+  if (!ctx.from || !isAdmin(ctx.from.id)) {
+    await ctx.reply('Команда только для администраторов.');
+    return;
+  }
+  const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+  const match = /\/debts\s+(.+)/i.exec(text || '');
+  const input = match?.[1]?.trim();
+  if (!input) {
+    await ctx.reply('Использование: /debts <предмет> (например: /debts russian или /debts Русский)');
+    return;
+  }
+  const subjectKey = resolveSubjectKey(input);
+  if (!subjectKey) {
+    await ctx.reply('Неизвестный предмет. Используйте ключ (russian, physics, ...) или русское название.');
+    return;
+  }
+  const subjectLabel = SUBJECT_TOPIC_NAMES[subjectKey] ?? subjectKey;
+  await ctx.reply(`Собираю долги по предмету «${subjectLabel}» из вкладки «Посещаемость»...`);
+  try {
+    const report = await getAttendanceDebtsBySubject(subjectKey, subjectLabel);
+    const header = [
+      `Долги по предмету: ${report.subjectLabel}`,
+      `Учеников во вкладке: ${report.stats.totalRows}`,
+      `Сопоставлено с БД: ${report.stats.matchedRows}`,
+      `Не сопоставлено с БД: ${report.stats.unmatchedRows}`,
+      `Всего долгов «Не сдал»: ${report.stats.totalDebts}`,
+      '',
+    ].join('\n');
+    await ctx.reply(header);
+    if (!report.students.length) {
+      await ctx.reply('По сопоставленным ученикам долгов «Не сдал» не найдено.');
+      return;
+    }
+    const lines: string[] = [];
+    for (const [i, s] of report.students.entries()) {
+      const assignments = s.debts.map((d) => d.assignment);
+      const debtList = assignments.join(', ');
+      const compactTypes = formatDebtTypeCompact(assignments);
+      lines.push(`${i + 1}. ${s.fullName}${s.telegramUsername ? ` (@${s.telegramUsername})` : ''} — ${s.debts.length}`);
+      lines.push(`   Типы: ${compactTypes}`);
+      lines.push(`   ${debtList}`);
+    }
+    let chunk = '';
+    for (const line of lines) {
+      const next = chunk ? `${chunk}\n${line}` : line;
+      if (next.length > 3900) {
+        await ctx.reply(chunk);
+        chunk = line;
+      } else {
+        chunk = next;
+      }
+    }
+    if (chunk) {
+      await ctx.reply(chunk);
+    }
+  } catch (e) {
+    console.error('[Attendance] /debts error:', e);
+    await ctx.reply('Ошибка при чтении долгов из Google Sheets. Проверьте ATTENDANCE_SHEET_ID и доступ сервисного аккаунта.');
+  }
 }
 
 /** Привязать текущий топик к предмету. Вызвать в группе, внутри нужного топика: /link_topic math или /link_topic Математика */
