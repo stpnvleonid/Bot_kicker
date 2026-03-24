@@ -24,6 +24,7 @@ import {
   handleSettingsCallback,
   handleAddAdmin,
   handleAdminHelpSectionCallback,
+  handleAdminDebtsSubjectCallback,
   handleSubjects,
   handleSubjectsCallback,
   handleLinkGroup,
@@ -287,6 +288,7 @@ async function main(): Promise<void> {
   bot.command('status', handleStatus);
   bot.command('planner_evening_now', handlePlannerEveningNow);
   bot.command('add_admin', handleAddAdmin);
+  bot.action(/^adm_debt:/, handleAdminDebtsSubjectCallback);
   bot.action(/^admin_help:/, handleAdminHelpSectionCallback);
   bot.action(/^push_confirm_/, handlePushCallback);
   bot.action(/^confirm_15m_/, handleConfirmReminder);

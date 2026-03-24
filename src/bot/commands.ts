@@ -1,5 +1,5 @@
 /**
- * Обработчики команд бота: /start, /settings, /subjects, админ /link_group, /link_topic, /select, /push, /groups, /events, /sync_now, /status.
+ * Обработчики команд бота: /start, /settings, /subjects, админ /link_group, /link_topic, /select, /push, /debts, /groups, /events, /sync_now, /status.
  */
 
 import { Context } from 'telegraf';
@@ -20,7 +20,7 @@ import {
 } from '../jobs/planner';
 import { selectPendingExamSubmissionsForStudent } from '../jobs/planner-exams';
 import { parseRuDateFromCaption, parseRuDdMmToIso } from '../utils/parse-ru-dd-mm';
-import { getAttendanceDebtsBySubject } from '../google/attendance-debts';
+import { DEBTS_MENU_SUBJECT_KEYS, getAttendanceDebtsBySubject } from '../google/attendance-debts';
 
 export const BOT_VERSION = 'planner-back-button-v1';
 
@@ -237,6 +237,27 @@ async function getOrCreateStudentId(ctx: Context): Promise<number | null> {
   return null;
 }
 
+/** Кнопки разделов админ-помощи (/help у админа). */
+const ADMIN_HELP_SECTIONS = [
+  { id: 'routing', label: 'Связь/Топики' },
+  { id: 'broadcasts', label: 'Рассылки' },
+  { id: 'calendar', label: 'Календарь/События' },
+  { id: 'planner', label: 'Планер' },
+  { id: 'debts', label: 'Долги' },
+  { id: 'admins', label: 'Админ-аккаунты' },
+] as const;
+
+function buildAdminHelpMainKeyboard() {
+  const s = ADMIN_HELP_SECTIONS;
+  return {
+    inline_keyboard: [
+      [Markup.button.callback(s[0].label, `admin_help:sec:${s[0].id}`), Markup.button.callback(s[1].label, `admin_help:sec:${s[1].id}`)],
+      [Markup.button.callback(s[2].label, `admin_help:sec:${s[2].id}`), Markup.button.callback(s[3].label, `admin_help:sec:${s[3].id}`)],
+      [Markup.button.callback(s[4].label, `admin_help:sec:${s[4].id}`), Markup.button.callback(s[5].label, `admin_help:sec:${s[5].id}`)],
+    ],
+  };
+}
+
 export async function handleHelp(ctx: Context): Promise<void> {
   const isAdminUser = ctx.from ? isAdmin(ctx.from.id) : false;
 
@@ -270,29 +291,13 @@ export async function handleHelp(ctx: Context): Promise<void> {
     return;
   }
 
-  const sections = [
-    { id: 'routing', label: 'Связь/Топики' },
-    { id: 'broadcasts', label: 'Рассылки' },
-    { id: 'calendar', label: 'Календарь/События' },
-    { id: 'planner', label: 'Планер' },
-    { id: 'admins', label: 'Админ-аккаунты' },
-  ] as const;
-
   await ctx.reply(
     [
       ...commonLines,
       '',
       'Админам: выбери раздел (всё структурировано по группам команд).',
     ].join('\n'),
-    {
-      reply_markup: {
-        inline_keyboard: [
-          [Markup.button.callback(sections[0].label, `admin_help:sec:${sections[0].id}`), Markup.button.callback(sections[1].label, `admin_help:sec:${sections[1].id}`)],
-          [Markup.button.callback(sections[2].label, `admin_help:sec:${sections[2].id}`), Markup.button.callback(sections[3].label, `admin_help:sec:${sections[3].id}`)],
-          [Markup.button.callback(sections[4].label, `admin_help:sec:${sections[4].id}`)],
-        ],
-      },
-    }
+    { reply_markup: buildAdminHelpMainKeyboard() }
   );
 }
 
@@ -337,6 +342,16 @@ function getAdminHelpSectionText(sectionId: string): { title: string; lines: str
           '/planner — как работает планер',
         ],
       };
+    case 'debts':
+      return {
+        title: 'Долги по «Посещаемости» (таблица только читается)',
+        lines: [
+          '/debts <предмет> — отчёт по ячейкам «Не сдал» (ученики из БД, выбравшие предмет в /subjects)',
+          'Сверка с БД: фамилия и имя из таблицы; отчество в строке ФИО не учитывается.',
+          '',
+          'Ниже — быстрый выбор предмета.',
+        ],
+      };
     case 'admins':
       return {
         title: 'Админ-аккаунты',
@@ -370,32 +385,10 @@ export async function handleAdminHelpSectionCallback(ctx: Context): Promise<void
       '',
     ];
 
-    const sections = [
-      { id: 'routing', label: 'Связь/Топики' },
-      { id: 'broadcasts', label: 'Рассылки' },
-      { id: 'calendar', label: 'Календарь/События' },
-      { id: 'planner', label: 'Планер' },
-      { id: 'admins', label: 'Админ-аккаунты' },
-    ] as const;
-
     await ctx
       .editMessageText(
         [...commonLines, 'Админам: выбери раздел (всё структурировано по группам команд).'].join('\n'),
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [
-                Markup.button.callback(sections[0].label, `admin_help:sec:${sections[0].id}`),
-                Markup.button.callback(sections[1].label, `admin_help:sec:${sections[1].id}`),
-              ],
-              [
-                Markup.button.callback(sections[2].label, `admin_help:sec:${sections[2].id}`),
-                Markup.button.callback(sections[3].label, `admin_help:sec:${sections[3].id}`),
-              ],
-              [Markup.button.callback(sections[4].label, `admin_help:sec:${sections[4].id}`)],
-            ],
-          },
-        }
+        { reply_markup: buildAdminHelpMainKeyboard() }
       )
       .catch(() => {});
     await ctx.answerCbQuery();
@@ -421,24 +414,25 @@ export async function handleAdminHelpSectionCallback(ctx: Context): Promise<void
     '',
   ];
 
-  const sections = [
-    { id: 'routing', label: 'Связь/Топики' },
-    { id: 'broadcasts', label: 'Рассылки' },
-    { id: 'calendar', label: 'Календарь/События' },
-    { id: 'planner', label: 'Планер' },
-    { id: 'admins', label: 'Админ-аккаунты' },
-  ] as const;
-
-  const keyboard = {
-    inline_keyboard: [
-      [Markup.button.callback(sections[0].label, `admin_help:sec:${sections[0].id}`), Markup.button.callback(sections[1].label, `admin_help:sec:${sections[1].id}`)],
-      [Markup.button.callback(sections[2].label, `admin_help:sec:${sections[2].id}`), Markup.button.callback(sections[3].label, `admin_help:sec:${sections[3].id}`)],
-      [Markup.button.callback(sections[4].label, `admin_help:sec:${sections[4].id}`)],
-    ],
-  };
-
   const text = [...commonLines, title, '', ...lines].join('\n');
-  await ctx.editMessageText(text, { reply_markup: keyboard }).catch(() => {});
+
+  if (sectionId === 'debts') {
+    const row1 = DEBTS_MENU_SUBJECT_KEYS.slice(0, 3).map((k) =>
+      Markup.button.callback(SUBJECT_TOPIC_NAMES[k] ?? k, `adm_debt:${k}`)
+    );
+    const row2 = DEBTS_MENU_SUBJECT_KEYS.slice(3, 6).map((k) =>
+      Markup.button.callback(SUBJECT_TOPIC_NAMES[k] ?? k, `adm_debt:${k}`)
+    );
+    await ctx
+      .editMessageText(text, {
+        reply_markup: {
+          inline_keyboard: [row1, row2, [Markup.button.callback('« Назад к разделам', 'admin_help:back')]],
+        },
+      })
+      .catch(() => {});
+  } else {
+    await ctx.editMessageText(text, { reply_markup: buildAdminHelpMainKeyboard() }).catch(() => {});
+  }
   await ctx.answerCbQuery();
 }
 
@@ -2027,25 +2021,14 @@ function formatDebtTypeCompact(assignments: string[]): string {
   return items.map(([t, c]) => `${t}: ${c}`).join(', ');
 }
 
-export async function handleDebts(ctx: Context): Promise<void> {
-  if (!ctx.from || !isAdmin(ctx.from.id)) {
-    await ctx.reply('Команда только для администраторов.');
-    return;
-  }
-  const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-  const match = /\/debts\s+(.+)/i.exec(text || '');
-  const input = match?.[1]?.trim();
-  if (!input) {
-    await ctx.reply('Использование: /debts <предмет> (например: /debts russian или /debts Русский)');
-    return;
-  }
-  const subjectKey = resolveSubjectKey(input);
-  if (!subjectKey) {
-    await ctx.reply('Неизвестный предмет. Используйте ключ (russian, physics, ...) или русское название.');
-    return;
-  }
+const DEBTS_MENU_KEY_SET = new Set<string>(DEBTS_MENU_SUBJECT_KEYS);
+
+async function sendDebtsReport(ctx: Context, subjectKey: string, opts: { announce?: boolean } = {}): Promise<void> {
+  const { announce = true } = opts;
   const subjectLabel = SUBJECT_TOPIC_NAMES[subjectKey] ?? subjectKey;
-  await ctx.reply(`Собираю долги по предмету «${subjectLabel}» из вкладки «Посещаемость»...`);
+  if (announce) {
+    await ctx.reply(`Собираю долги по предмету «${subjectLabel}» из вкладки «Посещаемость»...`);
+  }
   try {
     const report = await getAttendanceDebtsBySubject(subjectKey, subjectLabel);
     const header = [
@@ -2087,6 +2070,46 @@ export async function handleDebts(ctx: Context): Promise<void> {
     console.error('[Attendance] /debts error:', e);
     await ctx.reply('Ошибка при чтении долгов из Google Sheets. Проверьте ATTENDANCE_SHEET_ID и доступ сервисного аккаунта.');
   }
+}
+
+export async function handleDebts(ctx: Context): Promise<void> {
+  if (!ctx.from || !isAdmin(ctx.from.id)) {
+    await ctx.reply('Команда только для администраторов.');
+    return;
+  }
+  const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+  const match = /\/debts\s+(.+)/i.exec(text || '');
+  const input = match?.[1]?.trim();
+  if (!input) {
+    await ctx.reply('Использование: /debts <предмет> (например: /debts russian или /debts Русский). Раздел «Долги» в /help — кнопки предметов.');
+    return;
+  }
+  const subjectKey = resolveSubjectKey(input);
+  if (!subjectKey) {
+    await ctx.reply('Неизвестный предмет. Используйте ключ (russian, physics, ...) или русское название.');
+    return;
+  }
+  await sendDebtsReport(ctx, subjectKey, { announce: true });
+}
+
+/** Кнопка предмета в разделе «Долги» админ-помощи. */
+export async function handleAdminDebtsSubjectCallback(ctx: Context): Promise<void> {
+  const cb = ctx.callbackQuery;
+  if (!cb || !('data' in cb) || !ctx.from) return;
+  const data = cb.data as string;
+  if (!data.startsWith('adm_debt:')) return;
+  if (!isAdmin(ctx.from.id)) {
+    await ctx.answerCbQuery('Только для администраторов.');
+    return;
+  }
+  const key = data.slice('adm_debt:'.length);
+  if (!DEBTS_MENU_KEY_SET.has(key)) {
+    await ctx.answerCbQuery('Неизвестный предмет.');
+    return;
+  }
+  const label = SUBJECT_TOPIC_NAMES[key] ?? key;
+  await ctx.answerCbQuery(`Загрузка: ${label}`);
+  await sendDebtsReport(ctx, key, { announce: false });
 }
 
 /** Привязать текущий топик к предмету. Вызвать в группе, внутри нужного топика: /link_topic math или /link_topic Математика */

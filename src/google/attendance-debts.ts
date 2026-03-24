@@ -47,6 +47,16 @@ const SHEET_SUBJECT_ALIASES: Record<string, string> = {
   math_base: 'Математика',
 };
 
+/** Ключи для кнопок «Долги» в админ-меню (по одному на блок в «Посещаемости»). */
+export const DEBTS_MENU_SUBJECT_KEYS = [
+  'russian',
+  'physics',
+  'society',
+  'informatics',
+  'english',
+  'math',
+] as const;
+
 const DEBT_STATUS = 'не сдал';
 
 let sheetsClient: sheets_v4.Sheets | null = null;
@@ -84,6 +94,18 @@ function splitNameTokens(v: string): string[] {
     .split(' ')
     .map((x) => x.trim())
     .filter(Boolean);
+}
+
+/**
+ * Из ФИО в таблице берём только фамилию и имя (первые два слова), отчество не участвует в сверке с БД.
+ */
+function sheetLastFirstForMatch(sheetFullName: string): { last: string; first: string } | null {
+  const raw = sheetFullName.replace(/\s+/g, ' ').trim();
+  if (!raw) return null;
+  const parts = raw.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return { last: parts[0], first: '' };
+  return { last: parts[0], first: parts[1] };
 }
 
 function looksLikeSubjectRow(row: string[]): boolean {
@@ -226,12 +248,22 @@ function scoreCandidate(sheetTokens: string[], dbTokens: string[]): number {
 }
 
 function matchStudentByFio(sheetName: string, students: DbStudent[]): DbStudent | null {
-  const sheetNorm = normalizeName(sheetName);
-  if (!sheetNorm) return null;
-  const exact = students.find((s) => normalizeName(`${s.last_name} ${s.first_name}`) === sheetNorm);
+  const parts = sheetLastFirstForMatch(sheetName);
+  if (!parts) return null;
+  const { last: sLast, first: sFirst } = parts;
+
+  const sheetNormFull = normalizeName(sFirst ? `${sLast} ${sFirst}` : sLast);
+  if (!sheetNormFull) return null;
+
+  const exact = students.find(
+    (s) => normalizeName(`${s.last_name} ${s.first_name}`.trim()) === sheetNormFull
+  );
   if (exact) return exact;
 
-  const sheetTokens = splitNameTokens(sheetName);
+  const sheetTokens = sFirst
+    ? splitNameTokens(`${sLast} ${sFirst}`)
+    : splitNameTokens(sLast);
+
   let best: DbStudent | null = null;
   let bestScore = 0;
   let secondScore = 0;
