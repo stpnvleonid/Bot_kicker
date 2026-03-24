@@ -1,6 +1,6 @@
 /**
  * Предметы и ключевые слова для сопоставления событий календаря с топиками.
- * См. docs/SUBJECTS_TOPICS_MAPPING.md
+ * См. docs/CONFIG.md
  */
 
 export const SUBJECT_TOPIC_NAMES: Record<string, string> = {

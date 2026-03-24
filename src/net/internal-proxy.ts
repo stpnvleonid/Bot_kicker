@@ -108,7 +108,7 @@ export function validateTelegramSocksProxyEnv(): void {
         'Задайте TELEGRAM_SOCKS_PROXY_URLS=socks5h://user:pass@HOST:PORT (реальный удалённый SOCKS5). ' +
         'В Docker 127.0.0.1 — это не хост-машина. Локально у себя на ПК с прокси на :1080: ' +
         'TELEGRAM_SOCKS_PROXY_URLS=socks5h://127.0.0.1:1080 или TELEGRAM_SOCKS_PROXY_DEFAULT_LOCAL=1. ' +
-        'См. docs/TELEGRAM_SOCKS_PROXY.md'
+        'См. docs/CONFIG.md'
     );
     process.exit(1);
   }
@@ -128,7 +128,7 @@ export function validateTelegramSocksProxyEnv(): void {
           '). В Docker **127.0.0.1/localhost — это сам контейнер**, не прокси на VPS. ' +
           'Замените на внешний IP/DNS SOCKS5, например socks5h://user:pass@YOUR_PROXY_IP:443. ' +
           'Проверьте на сервере: `grep TELEGRAM .env` и `docker compose exec bot env | grep TELEGRAM`. ' +
-          'Исключение (sidecar в одной сети compose): TELEGRAM_SOCKS_ALLOW_LOOPBACK=1. См. docs/TELEGRAM_SOCKS_PROXY.md'
+          'Исключение (sidecar в одной сети compose): TELEGRAM_SOCKS_ALLOW_LOOPBACK=1. См. docs/CONFIG.md'
       );
       process.exit(1);
     }

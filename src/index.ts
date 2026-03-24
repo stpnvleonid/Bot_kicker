@@ -321,7 +321,7 @@ async function main(): Promise<void> {
       console.error(
         '[Startup] Hint: отказ в соединении с **127.0.0.1:1080** — внутри Docker это **сам контейнер**, не прокси на хосте. ' +
           'Укажите в TELEGRAM_SOCKS_PROXY_URLS **внешний** SOCKS5 (IP/DNS прокси), например socks5h://user:pass@37.x.x.x:443. ' +
-          'Не полагайтесь на 127.0.0.1 без явного URL. См. docs/TELEGRAM_SOCKS_PROXY.md'
+          'Не полагайтесь на 127.0.0.1 без явного URL. См. docs/CONFIG.md'
       );
       return;
     }
@@ -329,7 +329,7 @@ async function main(): Promise<void> {
       '[Startup] Hint: не удаётся достучаться до api.telegram.org (таймаут / сеть). ' +
         (proxyOn
           ? 'SOCKS включён — проверьте TELEGRAM_SOCKS_PROXY_URLS (доступность хоста/порта, логин/пароль, тип = SOCKS5).'
-          : 'Сейчас режим **direct** — в .env задайте TELEGRAM_SOCKS_PROXY_ENABLED=1 и TELEGRAM_SOCKS_PROXY_URLS=socks5h://... (см. docs/TELEGRAM_SOCKS_PROXY.md). ' +
+          : 'Сейчас режим **direct** — в .env задайте TELEGRAM_SOCKS_PROXY_ENABLED=1 и TELEGRAM_SOCKS_PROXY_URLS=socks5h://... (см. docs/CONFIG.md). ' +
             'Проверка: docker compose exec bot env | grep TELEGRAM')
     );
   };

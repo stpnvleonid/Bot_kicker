@@ -367,7 +367,7 @@ export async function runPlannerExportJobForDate(taskDate: string): Promise<void
       console.error(
         '[Planner] Export error: в таблице включена защита листа/диапазонов. ' +
           'Снимите защиту с областей, куда пишет бот (столбцы с задачами и результатом по дням), ' +
-          'или в настройках защиты добавьте сервисный аккаунт (client_email из JSON) в список редакторов. Подробнее: docs/PLANNER.md'
+          'или в настройках защиты добавьте сервисный аккаунт (client_email из JSON) в список редакторов. Подробнее: docs/CONFIG.md'
       );
     } else {
       console.error('[Planner] Export error:', e);
@@ -473,7 +473,7 @@ export async function runPlannerFullExportJobForDate(taskDate: string): Promise<
       console.error(
         '[Planner] FullExport error: в таблице включена защита листа/диапазонов. ' +
           'Снимите защиту с областей, куда пишет бот (столбцы с задачами и результатом по дням), ' +
-          'или в настройках защиты добавьте сервисный аккаунт (client_email из JSON) в список редакторов. Подробнее: docs/PLANNER.md'
+          'или в настройках защиты добавьте сервисный аккаунт (client_email из JSON) в список редакторов. Подробнее: docs/CONFIG.md'
       );
     } else {
       console.error('[Planner] FullExport error:', e);

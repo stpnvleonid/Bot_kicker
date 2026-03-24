@@ -4,16 +4,11 @@ Telegram-бот: события из Google Calendar → напоминания 
 
 ## Документация
 
-- [Технический дизайн (Telegram)](docs/TECHNICAL_DESIGN_TELEGRAM.md) — архитектура, БД, все Job'ы, команды.
-- [Разработка и продакшен](docs/SETUP.md) — запуск, миграции, PM2.
-- [Деплой на Ubuntu с GitHub](docs/DEPLOY_UBUNTU.md) — сервер, секреты, PM2, обновления.
-- [Docker](docs/DOCKER.md) — образ без секретов, `docker compose`, тома для `.env` / `secrets` / `data`.
-- [Деплой Docker после GitHub](docs/DEPLOY_DOCKER_GITHUB.md) — Ubuntu: clone, секреты по SCP, `docker compose up`.
-- [Бот не отвечает](docs/TROUBLESHOOTING_BOT.md) — логи, токен, сеть, SOCKS в Docker.
-- [SOCKS5 для Telegram на сервере](docs/TELEGRAM_SOCKS_PROXY.md) — если хост блокирует `api.telegram.org`.
-- [Переключение с тестового чата на боевой](docs/SWITCH_TO_PRODUCTION_CHAT.md) — пошагово: chat_id, топики, БД.
-- [Планер: Google Sheets и `/planner_week`](docs/PLANNER.md) — интеграция и недельное планирование.
-- [Улучшения продукта](docs/IMPROVEMENTS_ROADMAP.md) — идеи по надёжности, UX, безопасности.
+- [Карта документации](docs/README.md)
+- [Локальный запуск и обновление](docs/RUN_LOCAL.md)
+- [Серверный запуск и обновление](docs/RUN_SERVER.md)
+- [Настройка `.env`, Google API и SOCKS](docs/CONFIG.md)
+- [Эксплуатация и архитектура (кратко)](docs/OPERATIONS.md)
 
 ## Требования
 
