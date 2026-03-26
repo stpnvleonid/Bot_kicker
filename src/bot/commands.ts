@@ -21,6 +21,7 @@ import {
 import { selectPendingExamSubmissionsForStudent } from '../jobs/planner-exams';
 import { parseRuDateFromCaption, parseRuDdMmToIso } from '../utils/parse-ru-dd-mm';
 import { DEBTS_MENU_SUBJECT_KEYS, getAttendanceDebtsBySubject } from '../google/attendance-debts';
+import { exportExamsWeekCsv } from '../jobs/exams-export';
 
 export const BOT_VERSION = 'planner-back-button-v1';
 
@@ -196,6 +197,7 @@ async function buildPlannerDoneSummaryPayload(
     lines.push('Планерных задач на сегодня нет.');
   }
   lines.push('Также ниже есть обязательные "exams" (Урок + ДЗ): их подтверждает админ после получения фото.');
+  lines.push('Кнопка 📸 отправляет фото-подтверждение по соответствующей строке exams.');
   if (exam.selected.length) {
     lines.push('');
     lines.push('Обязательные "exams" на модерации:');
@@ -212,12 +214,13 @@ async function buildPlannerDoneSummaryPayload(
 
   const keyboard: Array<Array<{ text: string; callback_data: string }>> = [
     ...tasks.map((t) => [
-      { text: `✅ ${t.idx}`, callback_data: `planner_done_set_completed_${t.id}` },
-      { text: `🟡 ${t.idx}`, callback_data: `planner_done_set_partly_${t.id}` },
+      { text: `✅ Полностью ${t.idx}`, callback_data: `planner_done_set_completed_${t.id}` },
+      { text: `🟡 Частично ${t.idx}`, callback_data: `planner_done_set_partly_${t.id}` },
+      { text: '❌ Отмена!', callback_data: `planner_done_set_cancelled_${t.id}` },
     ]),
     ...exam.selected.map((s) => [
       {
-        text: s.status === 'rejected' ? '↩ Фото заново' : '📸 Отправить фото',
+        text: s.status === 'rejected' ? '↩ Фото заново' : `📸 Фото ${s.itemTitle}`,
         callback_data: `planner_exam_upload_${s.id}`,
       },
     ]),
@@ -243,7 +246,7 @@ const ADMIN_HELP_SECTIONS = [
   { id: 'broadcasts', label: 'Рассылки' },
   { id: 'calendar', label: 'Календарь/События' },
   { id: 'planner', label: 'Планер' },
-  { id: 'debts', label: 'Долги' },
+  { id: 'debts', label: 'Успеваемость' },
   { id: 'admins', label: 'Админ-аккаунты' },
 ] as const;
 
@@ -344,11 +347,10 @@ function getAdminHelpSectionText(sectionId: string): { title: string; lines: str
       };
     case 'debts':
       return {
-        title: 'Долги по «Посещаемости» (таблица только читается)',
+        title: 'Успеваемость',
         lines: [
-          '/debts <предмет> — отчёт по ячейкам «Не сдал»; сопоставление со всеми учениками в БД по фамилии и имени.',
-          'Если предмет не выбран в /subjects — человек всё равно попадёт в отчёт с пометкой [нет в /subjects].',
-          'Отчество в таблице не участвует в сверке. Не сопоставляется — нет в БД, опечатка в ФИО или неоднозначное совпадение.',
+          '/export_exams_week YYYY-MM-DD — CSV по вебинарам/ДЗ exams (Пн–Сб, expected/confirmed, только student_id).',
+          '/debts <предмет> — долги из вкладки «Посещаемость» (Google Sheets).',
           '',
           'Ниже — быстрый выбор предмета.',
         ],
@@ -897,7 +899,7 @@ export async function handlePlannerInfo(ctx: Context): Promise<void> {
         inline_keyboard: [
           [
             Markup.button.callback('Изменить планы', 'planner_start_today'),
-            Markup.button.callback('Выполнено', 'planner_done_summary'),
+            Markup.button.callback('Отметить выполнение', 'planner_done_summary'),
           ],
         ],
       },
@@ -1190,12 +1192,16 @@ export async function handlePlannerExamAdminReject(ctx: Context): Promise<void> 
   }
 }
 
-/** Планер: установка статуса задачи на «выполнено» или «частично» из экрана «Выполнено». */
+/** Планер: установка статуса задачи на «выполнено», «частично» или «отменено» из экрана «Выполнено». */
 export async function handlePlannerDoneToggle(ctx: Context): Promise<void> {
   const cb = ctx.callbackQuery;
   if (!cb || !('data' in cb) || !ctx.from) return;
   const data = cb.data as string;
-  if (!data.startsWith('planner_done_set_completed_') && !data.startsWith('planner_done_set_partly_')) return;
+  if (
+    !data.startsWith('planner_done_set_completed_') &&
+    !data.startsWith('planner_done_set_partly_') &&
+    !data.startsWith('planner_done_set_cancelled_')
+  ) return;
 
   if (ctx.chat?.type !== 'private') {
     await safeAnswerCbQuery(ctx, 'Планер работает только в личке.');
@@ -1203,7 +1209,10 @@ export async function handlePlannerDoneToggle(ctx: Context): Promise<void> {
   }
 
   const taskId = parseInt(
-    data.replace('planner_done_set_completed_', '').replace('planner_done_set_partly_', ''),
+    data
+      .replace('planner_done_set_completed_', '')
+      .replace('planner_done_set_partly_', '')
+      .replace('planner_done_set_cancelled_', ''),
     10
   );
   if (Number.isNaN(taskId)) {
@@ -1236,12 +1245,14 @@ export async function handlePlannerDoneToggle(ctx: Context): Promise<void> {
     return;
   }
 
-  // Устанавливаем статус в зависимости от нажатой кнопки (completed или partly_done).
+  // Устанавливаем статус в зависимости от нажатой кнопки.
   let nextStatus = row.status;
   if (data.startsWith('planner_done_set_completed_')) {
     nextStatus = 'completed';
   } else if (data.startsWith('planner_done_set_partly_')) {
     nextStatus = 'partly_done';
+  } else if (data.startsWith('planner_done_set_cancelled_')) {
+    nextStatus = 'cancelled';
   }
 
   if (nextStatus !== row.status) {
@@ -1316,7 +1327,7 @@ export async function handlePlannerBackToTasks(ctx: Context): Promise<void> {
   const keyboard = [
     [
       Markup.button.callback('Изменить планы', 'planner_start_today'),
-      Markup.button.callback('Выполнено', 'planner_done_summary'),
+      Markup.button.callback('Отметить выполнение', 'planner_done_summary'),
     ],
   ];
 
@@ -1547,7 +1558,7 @@ export async function handlePlannerEditDone(ctx: Context): Promise<void> {
       inline_keyboard: [
         [
           Markup.button.callback('Изменить планы', 'planner_start_today'),
-          Markup.button.callback('Выполнено', 'planner_done_summary'),
+          Markup.button.callback('Отметить выполнение', 'planner_done_summary'),
         ],
       ],
     },
@@ -2119,6 +2130,33 @@ export async function handleAdminDebtsSubjectCallback(ctx: Context): Promise<voi
   await sendDebtsReport(ctx, key, { announce: false });
 }
 
+/** Админ: экспорт CSV по "exams" за неделю (Пн–Сб) вокруг даты. */
+export async function handleExportExamsWeek(ctx: Context): Promise<void> {
+  if (!ctx.from || !isAdmin(ctx.from.id)) {
+    await ctx.reply('Команда только для администраторов.');
+    return;
+  }
+  const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+  const match = /\/export_exams_week\s+(\d{4}-\d{2}-\d{2})/i.exec(text || '');
+  const weekDateIso = match?.[1];
+  if (!weekDateIso) {
+    await ctx.reply('Использование: /export_exams_week YYYY-MM-DD');
+    return;
+  }
+
+  try {
+    const res = exportExamsWeekCsv({ weekDateIso });
+    await ctx.reply(`Экспортирую exams CSV за неделю ${res.weekStart} — ${res.weekEnd} (строк: ${res.rows})...`);
+    await ctx.replyWithDocument(
+      { source: res.filePath, filename: res.fileName } as any,
+      { caption: `exams CSV ${res.weekStart} — ${res.weekEnd} (rows=${res.rows})` } as any
+    );
+  } catch (e) {
+    console.error('[ExamsExport] /export_exams_week error:', e);
+    await ctx.reply('Ошибка экспорта exams CSV. Подробности в логах.');
+  }
+}
+
 /** Привязать текущий топик к предмету. Вызвать в группе, внутри нужного топика: /link_topic math или /link_topic Математика */
 export async function handleLinkTopic(ctx: Context): Promise<void> {
   if (!ctx.from || !isAdmin(ctx.from.id)) {
@@ -2202,7 +2240,7 @@ function buildPlannerEditListContent(
   ]);
   const bottomRow: Array<{ text: string; callback_data: string }> = [];
   if (tasks.length < PLANNER_MAX_TASKS) bottomRow.push(Markup.button.callback('Добавить задачу', 'planner_add_task'));
-  bottomRow.push(Markup.button.callback('Назад', 'planner_edit_done'));
+  bottomRow.push(Markup.button.callback('Назад к задачам', 'planner_edit_done'));
   keyboard.push(bottomRow);
   return { text: lines.join('\n'), inline_keyboard: keyboard };
 }

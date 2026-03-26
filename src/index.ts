@@ -35,6 +35,7 @@ import {
   handleSelect,
   handlePush,
   handleDebts,
+  handleExportExamsWeek,
   handlePushReport,
   handlePushCallback,
   handleConfirmReminder,
@@ -281,6 +282,7 @@ async function main(): Promise<void> {
   bot.command('select', handleSelect);
   bot.command('push', handlePush);
   bot.command('debts', handleDebts);
+  bot.command('export_exams_week', handleExportExamsWeek);
   bot.command('push_report', handlePushReport);
   bot.command('groups', handleGroups);
   bot.command('events', handleEvents);

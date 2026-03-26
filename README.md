@@ -80,6 +80,27 @@ npm stop
 | `/push Текст` | админ | Рассылка в ЛС по последней выборке (с подтверждением, лимит 60/час). |
 | `/subscribers` | админ | Кто подписан на бота и календарь «2 курс». |
 
+## Аналитика (локально)
+
+Бот может отдавать админам CSV по "exams" (вебинары + ДЗ) за неделю:
+
+- `/export_exams_week YYYY-MM-DD` → документ `exams_week_<weekStart>__<weekEnd>.csv`
+
+Локальный анализ CSV:
+
+- папка: `analytic_data/`
+- запуск:
+
+```bash
+python analytic_data/analyze_exams_csv.py --input analytic_data
+```
+
+Фильтр по одной неделе (по `week_start` из CSV):
+
+```bash
+python analytic_data/analyze_exams_csv.py --input analytic_data --only-week YYYY-MM-DD
+```
+
 ## Инструкция для админа
 
 ### 1. Права и календарь
