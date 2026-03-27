@@ -72,6 +72,8 @@ import { runCalendarSyncJob } from './jobs/calendar-sync';
 import { runNotificationSchedulerJob } from './jobs/notification-scheduler';
 import { runSendQueueWorkerIteration } from './jobs/send-queue-worker';
 import { runCleanupArchiveJob } from './jobs/cleanup-archive';
+import { runExamsSubmissionsBackfillJob } from './jobs/exams-backfill';
+import { runExamsGapCheckJob } from './jobs/exams-gap-check';
 import {
   runPlannerMorningJob,
   runPlannerEveningJob,
@@ -196,6 +198,8 @@ async function main(): Promise<void> {
   let job5Export: cron.ScheduledTask | null = null;
   let job5TwoHourExport: cron.ScheduledTask | null = null;
   let job4Cleanup: cron.ScheduledTask | null = null;
+  let job6ExamsBackfill: cron.ScheduledTask | null = null;
+  let job7ExamsGapCheck: cron.ScheduledTask | null = null;
   let job3Interval: NodeJS.Timeout | null = null;
 
   // Глобальное логирование всех апдейтов (действий пользователя) — в проде можно приглушить.
@@ -488,6 +492,18 @@ async function main(): Promise<void> {
   });
   console.log('Cron: Job4 cleanup daily at 03:00');
 
+  // Job 6: backfill exams submissions каждый час (идемпотентный).
+  job6ExamsBackfill = cron.schedule('0 * * * *', () => {
+    runExamsSubmissionsBackfillJob().catch((e) => console.error('Job6:', e));
+  });
+  console.log('Cron: Job6 exams submissions backfill hourly');
+
+  // Job 7: check gap-инварианта каждые 2 часа.
+  job7ExamsGapCheck = cron.schedule('15 */2 * * *', () => {
+    runExamsGapCheckJob().catch((e) => console.error('Job7:', e));
+  });
+  console.log('Cron: Job7 exams gaps check every 2h');
+
   // Long polling не await — `launch()` внутри ждёт бесконечный цикл getUpdates и никогда не резолвится.
   console.log('[Startup] Starting long polling (deleteWebhook + getUpdates loop)...');
   void bot.launch({ dropPendingUpdates: dropPendingUpdates }).catch((e) => {
@@ -508,6 +524,8 @@ async function main(): Promise<void> {
     if (job5Export) job5Export.stop();
     if (job5TwoHourExport) job5TwoHourExport.stop();
     if (job4Cleanup) job4Cleanup.stop();
+    if (job6ExamsBackfill) job6ExamsBackfill.stop();
+    if (job7ExamsGapCheck) job7ExamsGapCheck.stop();
     if (job3Interval) {
       clearInterval(job3Interval);
       job3Interval = null;

@@ -84,6 +84,139 @@ function getExamEventsInLookback(db: ReturnType<typeof getDb>, fromIso: string, 
     .all(fromIso, toIso, EXAMS_KEYWORD, EXAMS_KEYWORD) as Array<{ id: number; title: string; description: string | null; start_at: string }>;
 }
 
+type ExamsEvent = { id: number; title: string; description: string | null; start_at: string };
+
+export function getExamEventsInRange(fromIso: string, toIso: string): ExamsEvent[] {
+  const db = getDb();
+  return getExamEventsInLookback(db, fromIso, toIso);
+}
+
+type EligibleStudentRow = { student_id: number };
+
+function getEligibleStudentIdsForEvent(
+  db: ReturnType<typeof getDb>,
+  eventId: number,
+  subjectKeys: string[]
+): number[] {
+  let rows: EligibleStudentRow[] = [];
+  if (subjectKeys.length > 0) {
+    const placeholders = subjectKeys.map(() => '?').join(',');
+    rows = db
+      .prepare(
+        `SELECT DISTINCT s.id AS student_id
+         FROM event_groups eg
+         JOIN student_groups sg ON sg.group_id = eg.group_id
+         JOIN students s ON s.id = sg.student_id
+         WHERE eg.event_id = ?
+           AND s.notify_dm = 1
+           AND s.dm_blocked = 0
+           AND EXISTS (
+             SELECT 1 FROM student_subjects ss
+             WHERE ss.student_id = s.id AND ss.subject_key IN (${placeholders})
+           )`
+      )
+      .all(eventId, ...subjectKeys) as EligibleStudentRow[];
+  } else {
+    rows = db
+      .prepare(
+        `SELECT DISTINCT s.id AS student_id
+         FROM event_groups eg
+         JOIN student_groups sg ON sg.group_id = eg.group_id
+         JOIN students s ON s.id = sg.student_id
+         WHERE eg.event_id = ?
+           AND s.notify_dm = 1
+           AND s.dm_blocked = 0`
+      )
+      .all(eventId) as EligibleStudentRow[];
+  }
+  return rows.map((r) => r.student_id);
+}
+
+export function ensureExamSubmissionsForEvent(event: ExamsEvent, upToDateIso: string): {
+  eventId: number;
+  eligibleStudents: number;
+  insertedPairs: number;
+} {
+  const db = getDb();
+  if (!isExamsEvent(event.title, event.description)) {
+    return { eventId: event.id, eligibleStudents: 0, insertedPairs: 0 };
+  }
+
+  const lessonDate = getMoscowIsoDateFromIso(event.start_at);
+  if (lessonDate > upToDateIso) {
+    return { eventId: event.id, eligibleStudents: 0, insertedPairs: 0 };
+  }
+
+  const subjectKeys = ensureEventSubjects(db, event.id, event.title, event.description);
+  const subjectKeyPrimary = getPrimarySubjectKey(subjectKeys);
+  const eligibleStudentIds = getEligibleStudentIdsForEvent(db, event.id, subjectKeys);
+
+  const countStmt = db.prepare(
+    `SELECT COUNT(*) AS c
+     FROM planner_exam_submissions
+     WHERE student_id = ? AND lesson_event_id = ? AND kind IN ('lesson','homework')`
+  );
+
+  let insertedPairs = 0;
+  for (const studentId of eligibleStudentIds) {
+    const before = (countStmt.get(studentId, event.id) as { c: number } | undefined)?.c ?? 0;
+    ensureExamSubmissionExists({
+      studentId,
+      lessonEventId: event.id,
+      kind: 'lesson',
+      lessonDate,
+      subjectKey: subjectKeyPrimary,
+    });
+    ensureExamSubmissionExists({
+      studentId,
+      lessonEventId: event.id,
+      kind: 'homework',
+      lessonDate,
+      subjectKey: subjectKeyPrimary,
+    });
+    const after = (countStmt.get(studentId, event.id) as { c: number } | undefined)?.c ?? 0;
+    if (after > before) insertedPairs += 1;
+  }
+
+  return {
+    eventId: event.id,
+    eligibleStudents: eligibleStudentIds.length,
+    insertedPairs,
+  };
+}
+
+export function ensureExamSubmissionsForDateRange(params: {
+  fromIso: string;
+  toIso: string;
+  upToDateIso: string;
+}): {
+  eventsScanned: number;
+  eventsProcessed: number;
+  eligibleStudentsTotal: number;
+  insertedPairsTotal: number;
+} {
+  const events = getExamEventsInRange(params.fromIso, params.toIso);
+  let eventsProcessed = 0;
+  let eligibleStudentsTotal = 0;
+  let insertedPairsTotal = 0;
+
+  for (const ev of events) {
+    const result = ensureExamSubmissionsForEvent(ev, params.upToDateIso);
+    if (result.eligibleStudents > 0 || result.insertedPairs > 0) {
+      eventsProcessed += 1;
+    }
+    eligibleStudentsTotal += result.eligibleStudents;
+    insertedPairsTotal += result.insertedPairs;
+  }
+
+  return {
+    eventsScanned: events.length,
+    eventsProcessed,
+    eligibleStudentsTotal,
+    insertedPairsTotal,
+  };
+}
+
 export async function ensureExamSubmissionsForStudent(studentId: number, screenDateIso: string): Promise<void> {
   const db = getDb();
 
@@ -97,29 +230,13 @@ export async function ensureExamSubmissionsForStudent(studentId: number, screenD
 
   for (const ev of events) {
     if (!isExamsEvent(ev.title, ev.description)) continue;
-
     const lessonDate = getMoscowIsoDateFromIso(ev.start_at);
     if (lessonDate > screenDateMoscow) continue; // ещё не вышел
-
     const subjectKeys = ensureEventSubjects(db, ev.id, ev.title, ev.description);
     const subjectKeyPrimary = getPrimarySubjectKey(subjectKeys);
-
     if (!studentEligibleForEvent(db, studentId, ev.id, subjectKeys)) continue;
-
-    ensureExamSubmissionExists({
-      studentId,
-      lessonEventId: ev.id,
-      kind: 'lesson',
-      lessonDate,
-      subjectKey: subjectKeyPrimary,
-    });
-    ensureExamSubmissionExists({
-      studentId,
-      lessonEventId: ev.id,
-      kind: 'homework',
-      lessonDate,
-      subjectKey: subjectKeyPrimary,
-    });
+    ensureExamSubmissionExists({ studentId, lessonEventId: ev.id, kind: 'lesson', lessonDate, subjectKey: subjectKeyPrimary });
+    ensureExamSubmissionExists({ studentId, lessonEventId: ev.id, kind: 'homework', lessonDate, subjectKey: subjectKeyPrimary });
   }
 }
 

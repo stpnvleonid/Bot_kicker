@@ -8,6 +8,7 @@ import { getDb } from '../db';
 import { getConfig } from '../config';
 import { detectSubjectsFromEventText } from '../config/subjects';
 import { markJobError, markJobSuccess } from '../db/job-health';
+import { runExamsSubmissionsBackfillJob } from './exams-backfill';
 
 const LOCK_KEY = 'job:calendar_sync';
 const LOCK_TTL_MS = 25 * 60 * 1000;
@@ -405,6 +406,12 @@ export async function runCalendarSyncJob(options?: { force?: boolean }): Promise
        SET status = 'completed', updated_at = datetime('now')
        WHERE status = 'active' AND end_at < datetime('now', '-1 day')`
     ).run();
+
+    // После синка календаря дополнительно обеспечиваем exams submissions для eligible студентов.
+    await runExamsSubmissionsBackfillJob({
+      fromIso: timeMin,
+      toIso: timeMax,
+    });
 
     console.log('[Job1] Calendar sync finished');
     markJobSuccess('job1_calendar_sync');

@@ -1,6 +1,10 @@
 import { getDb } from './index';
 
-export type JobHealthName = 'job1_calendar_sync' | 'job2_notification_scheduler';
+export type JobHealthName =
+  | 'job1_calendar_sync'
+  | 'job2_notification_scheduler'
+  | 'job6_exams_backfill'
+  | 'job7_exams_gap_check';
 
 function normalizeErrorMessage(err: unknown): string {
   if (!err) return 'unknown error';

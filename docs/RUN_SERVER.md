@@ -62,6 +62,38 @@ docker compose restart bot
 docker compose down
 ```
 
+Exams monitor (в контейнере, без `ts-node`):
+
+```bash
+docker compose exec bot node dist/tools/exams-monitor-cli.js 2026-03-23 --subject physics
+```
+
+или через npm-скрипт:
+
+```bash
+docker compose exec bot npm run debug-exams-monitor:prod -- 2026-03-23 --subject physics
+```
+
+Backfill exams submissions (ручной запуск):
+
+```bash
+docker compose exec bot npm run exams-backfill:prod -- 2026-03-23 2026-03-28 2026-03-28
+```
+
+Gap-check (eligible>0 и submissions=0):
+
+```bash
+docker compose exec bot npm run exams-gap-check:prod -- 2026-03-23 2026-03-28
+```
+
+Проверка после фикса:
+
+```bash
+docker compose exec bot npm run exams-backfill:prod -- 2026-03-23 2026-03-28 2026-03-28
+docker compose exec bot npm run debug-exams-monitor:prod -- 2026-03-23 --subject physics
+docker compose exec bot npm run exams-gap-check:prod -- 2026-03-23 2026-03-28
+```
+
 ## 5) Частые проблемы
 
 - Бот не отвечает: проверь `BOT_TOKEN`, сетевой доступ к `api.telegram.org`, и startup-логи.
