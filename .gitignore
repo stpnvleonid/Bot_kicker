@@ -57,3 +57,7 @@ Desktop.ini
 # Coverage (если появится)
 coverage/
 .nyc_output/
+
+# Analytic data
+analytic_data/exams_week_*.csv
+analytic_data/output/

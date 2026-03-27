@@ -46,7 +46,7 @@ function toCsvLine(values: Array<string | number | null | undefined>): string {
  * - week: lesson_date BETWEEN weekStart AND weekEnd
  * - kind IN (lesson, homework)
  * - status IN (pending, confirmed)  (expected = pending+confirmed)
- * - оставляем только те (lesson_event_id, kind), где есть хотя бы один confirmed в неделе
+ * - без фильтра "есть confirmed": для диагностики выгружаем все pending+confirmed
  */
 export function exportExamsWeekCsv(params: ExamsWeekExportParams): ExamsWeekExportResult {
   const { weekDateIso } = params;
@@ -54,15 +54,6 @@ export function exportExamsWeekCsv(params: ExamsWeekExportParams): ExamsWeekExpo
 
   const db = getDb();
   const sql = `
-WITH week_events AS (
-  SELECT lesson_event_id, kind
-  FROM planner_exam_submissions
-  WHERE lesson_date BETWEEN ? AND ?
-    AND kind IN ('lesson','homework')
-    AND status IN ('pending','confirmed')
-  GROUP BY lesson_event_id, kind
-  HAVING SUM(CASE WHEN status='confirmed' THEN 1 ELSE 0 END) > 0
-)
 SELECT
   pes.student_id AS student_id,
   pes.lesson_event_id AS lesson_event_id,
@@ -72,16 +63,13 @@ SELECT
   pes.status AS status,
   pes.last_confirmed_completion_date AS last_confirmed_completion_date
 FROM planner_exam_submissions pes
-JOIN week_events we
-  ON we.lesson_event_id = pes.lesson_event_id
- AND we.kind = pes.kind
 WHERE pes.lesson_date BETWEEN ? AND ?
   AND pes.kind IN ('lesson','homework')
   AND pes.status IN ('pending','confirmed')
 ORDER BY pes.kind, subject_key, pes.lesson_date, pes.lesson_event_id, pes.student_id
 `;
 
-  const rows = db.prepare(sql).all(weekStart, weekEnd, weekStart, weekEnd) as Array<{
+  const rows = db.prepare(sql).all(weekStart, weekEnd) as Array<{
     student_id: number;
     lesson_event_id: number;
     kind: 'lesson' | 'homework';

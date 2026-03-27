@@ -1,18 +1,18 @@
 import argparse
+import base64
 import csv
+import json
 import os
 import sqlite3
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from io import BytesIO
 from typing import Dict, Iterable, List, Tuple
 
 
 def _ensure_utf8_stdout() -> None:
-    """
-    PowerShell/Windows sometimes prints UTF-8 as mojibake.
-    Force UTF-8 for stdout/stderr when possible (Python 3.7+).
-    """
     try:
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8")
@@ -41,8 +41,12 @@ def iter_csv_paths(input_path: str) -> List[str]:
         raise SystemExit(f"Input path not found: {input_path}")
     paths: List[str] = []
     for name in os.listdir(input_path):
-        if name.lower().endswith(".csv"):
-            paths.append(os.path.join(input_path, name))
+        if not name.lower().endswith(".csv"):
+            continue
+        # Mapping file is auxiliary and should not be treated as exams source.
+        if name.lower() == "student_map.csv":
+            continue
+        paths.append(os.path.join(input_path, name))
     paths.sort()
     return paths
 
@@ -52,19 +56,16 @@ def safe_get(row: Dict[str, str], key: str) -> str:
     return v.strip()
 
 
-def kind_label(kind: str) -> str:
-    k = (kind or "").strip().lower()
-    if k == "lesson":
-        return "Уроки"
-    if k == "homework":
-        return "ДЗ"
-    return k or "unknown"
-
-
 def pct(confirmed: int, expected: int) -> str:
     if expected <= 0:
         return "—"
     return f"{round(confirmed * 100 / expected)}%"
+
+
+def pct_num(confirmed: int, expected: int) -> float:
+    if expected <= 0:
+        return 0.0
+    return round(confirmed * 100.0 / expected, 2)
 
 
 def read_rows(paths: Iterable[str]) -> Iterable[Dict[str, str]]:
@@ -108,10 +109,130 @@ def load_student_map_from_sqlite(db_path: str) -> Dict[str, str]:
     mapping: Dict[str, str] = {}
     for sid, last_name, first_name in rows:
         sid_s = str(sid)
-        full = " ".join([x for x in [(last_name or "").strip(), (first_name or "").strip()] if x]).strip()
+        full = " ".join(
+            [x for x in [(last_name or "").strip(), (first_name or "").strip()] if x]
+        ).strip()
         if full:
             mapping[sid_s] = full
     return mapping
+
+
+def write_csv(path: str, header: List[str], rows: Iterable[List[str]]) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        for row in rows:
+            w.writerow(row)
+
+
+def maybe_make_subject_chart(subject_rows: List[Dict[str, str]]) -> str:
+    """
+    Returns base64 PNG (data) for subject chart, or empty string if matplotlib unavailable.
+    """
+    try:
+        import matplotlib.pyplot as plt  # type: ignore
+    except Exception:
+        return ""
+
+    labels = [f"{r['subject_key']} ({r['kind']})" for r in subject_rows]
+    rates = [float(r["rate_percent"]) for r in subject_rows]
+
+    fig = plt.figure(figsize=(max(8, len(labels) * 0.7), 4.5))
+    ax = fig.add_subplot(111)
+    bars = ax.bar(labels, rates)
+    ax.set_ylim(0, 100)
+    ax.set_ylabel("Rate %")
+    ax.set_title("Confirmed / Expected by Subject and Kind")
+    ax.grid(axis="y", alpha=0.25)
+    for b, v in zip(bars, rates):
+        ax.text(b.get_x() + b.get_width() / 2.0, min(99, v + 1), f"{v:.1f}%", ha="center", va="bottom", fontsize=8)
+    plt.xticks(rotation=30, ha="right")
+    plt.tight_layout()
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=120)
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def render_dashboard_html(
+    out_path: str,
+    generated_at: str,
+    weeks: List[Tuple[str, str]],
+    only_week: str,
+    source_files: List[str],
+    diagnostics: Dict[str, Dict[str, int]],
+    student_rows: List[Dict[str, str]],
+    subject_rows: List[Dict[str, str]],
+    chart_b64: str,
+) -> None:
+    weeks_str = ", ".join([f"{ws}..{we}" for ws, we in weeks]) if weeks else "—"
+
+    def rows_to_html(rows: List[Dict[str, str]], cols: List[str]) -> str:
+        body = []
+        for r in rows:
+            tds = "".join([f"<td>{r.get(c,'')}</td>" for c in cols])
+            body.append(f"<tr>{tds}</tr>")
+        if not body:
+            body.append(f"<tr><td colspan='{len(cols)}'>Нет данных</td></tr>")
+        head = "".join([f"<th>{c}</th>" for c in cols])
+        return f"<table><thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table>"
+
+    diag_lines = []
+    for subject, status_map in sorted(diagnostics.items()):
+        parts = ", ".join([f"{k}={v}" for k, v in sorted(status_map.items())])
+        diag_lines.append(f"<li><b>{subject}</b>: {parts}</li>")
+    if not diag_lines:
+        diag_lines.append("<li>Нет данных</li>")
+
+    chart_html = (
+        f"<img alt='chart' src='data:image/png;base64,{chart_b64}' />"
+        if chart_b64
+        else "<p><i>График не построен: matplotlib не установлен.</i></p>"
+    )
+
+    html = f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Exams analytics dashboard</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; margin: 20px; color: #222; }}
+    h1, h2 {{ margin: 0 0 12px 0; }}
+    .meta {{ margin: 0 0 16px 0; color: #555; }}
+    .card {{ border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 14px; }}
+    table {{ border-collapse: collapse; width: 100%; margin-top: 8px; }}
+    th, td {{ border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; }}
+    th {{ background: #f7f7f7; text-align: left; }}
+    ul {{ margin: 8px 0 0 18px; }}
+    img {{ max-width: 100%; border: 1px solid #ddd; border-radius: 6px; }}
+  </style>
+</head>
+<body>
+  <h1>Exams analytics dashboard</h1>
+  <p class="meta">Сгенерировано: {generated_at}<br/>Недели во входе: {weeks_str}<br/>Фильтр --only-week: {only_week or "нет"}</p>
+
+  <div class="card">
+    <h2>Диагностика входных данных (subject_key x status)</h2>
+    <p>Если какого-то предмета (например, informatics) нет в этом блоке, его нет во входных CSV.</p>
+    <ul>{''.join(diag_lines)}</ul>
+    <p><b>Source files:</b> {', '.join([os.path.basename(x) for x in source_files]) if source_files else '—'}</p>
+  </div>
+
+  <div class="card">
+    <h2>Итог по предметам</h2>
+    {rows_to_html(subject_rows, ["subject_key","kind","expected","confirmed","rate_percent"])}
+    {chart_html}
+  </div>
+
+  <div class="card">
+    <h2>Итог по студентам и предметам</h2>
+    {rows_to_html(student_rows, ["student","subject_key","lessons","homeworks"])}
+  </div>
+</body>
+</html>"""
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(html)
 
 
 def main() -> int:
@@ -137,20 +258,19 @@ def main() -> int:
         default="",
         help="Optional path to local SQLite DB to auto-resolve student_id -> name (e.g. data/bot.sqlite). Overrides --student-map.",
     )
+    ap.add_argument(
+        "--out-dir",
+        default=os.path.join("analytic_data", "output"),
+        help="Directory for generated reports/dashboard (default: analytic_data/output)",
+    )
     args = ap.parse_args()
 
     paths = iter_csv_paths(args.input)
     if not paths:
-        print("No CSV files found.")
+        print("No exams CSV files found.")
         return 0
 
-    # Aggregations:
-    # per_student[(student_id, subject_key, kind)] = Counters
-    per_student: Dict[Tuple[str, str, str], Counters] = {}
-    # per_subject[(subject_key, kind)] = Counters
-    per_subject: Dict[Tuple[str, str], Counters] = {}
-
-    weeks_seen = set()
+    os.makedirs(args.out_dir, exist_ok=True)
 
     # Name resolution
     if args.db:
@@ -159,6 +279,12 @@ def main() -> int:
     else:
         student_name_by_id = load_student_map_csv(args.student_map)
         student_name_source = f"csv:{args.student_map}"
+
+    per_student: Dict[Tuple[str, str, str], Counters] = {}
+    per_subject: Dict[Tuple[str, str], Counters] = {}
+    weeks_seen = set()
+    subject_status_counter: Counter = Counter()
+    total_rows = 0
 
     for row in read_rows(paths):
         week_start = safe_get(row, "week_start")
@@ -169,21 +295,22 @@ def main() -> int:
             continue
 
         student_id = safe_get(row, "student_id")
-        student_label = student_name_by_id.get(student_id, "")
-        student_key = student_label or (student_id or "unknown")
         subject_key = safe_get(row, "subject_key") or "unknown"
-        kind = safe_get(row, "kind")
+        kind = safe_get(row, "kind") or "unknown"
         status = safe_get(row, "status").lower()
+        subject_status_counter[(subject_key, status)] += 1
 
-        # Expected = pending+confirmed (CSV already contains only these statuses, but keep a guard).
         if status not in ("pending", "confirmed"):
             continue
 
+        total_rows += 1
         is_confirmed = status == "confirmed"
 
-        k_student = (student_key, subject_key, kind or "unknown")
-        k_subject = (subject_key, kind or "unknown")
+        student_label = student_name_by_id.get(student_id, "")
+        student_key = student_label or (student_id or "unknown")
 
+        k_student = (student_key, subject_key, kind)
+        k_subject = (subject_key, kind)
         per_student[k_student] = per_student.get(k_student, Counters()).add(is_confirmed)
         per_subject[k_subject] = per_subject.get(k_subject, Counters()).add(is_confirmed)
 
@@ -195,15 +322,30 @@ def main() -> int:
         print("Tip: use --only-week YYYY-MM-DD to filter one week_start")
         print()
 
-    # Report 1: per student, grouped by student_id then subject.
+    # Diagnostics for potentially missing subjects.
+    print("=== Диагностика входных данных (subject_key x status) ===")
+    subject_diag: Dict[str, Dict[str, int]] = defaultdict(dict)
+    for (subj, status), cnt in sorted(subject_status_counter.items()):
+        subject_diag[subj][status] = cnt
+    if not subject_diag:
+        print("Нет данных после фильтра.")
+    else:
+        for subj in sorted(subject_diag.keys()):
+            parts = ", ".join([f"{k}={v}" for k, v in sorted(subject_diag[subj].items())])
+            print(f"- {subj}: {parts}")
+    if "informatics" not in subject_diag:
+        print("WARNING: subject_key='informatics' отсутствует во входных CSV за выбранный фильтр.")
+    print()
+
+    # Report 1: per student
     print("=== По студентам (пройдено = confirmed; expected = pending+confirmed) ===")
     if student_name_by_id:
         print(f"(Имена студентов: {student_name_source})")
-    # Build a nested structure: student -> subject -> kind -> Counters
     nested: Dict[str, Dict[str, Dict[str, Counters]]] = defaultdict(lambda: defaultdict(dict))
     for (student_id, subject_key, kind), c in per_student.items():
         nested[student_id][subject_key][kind] = c
 
+    student_rows_csv: List[Dict[str, str]] = []
     for student_id in sorted(nested.keys()):
         print(f"\n{student_id}")
         subjects = nested[student_id]
@@ -211,19 +353,25 @@ def main() -> int:
             kinds = subjects[subject_key]
             lesson = kinds.get("lesson", Counters())
             hw = kinds.get("homework", Counters())
-            print(
-                f"  {subject_key}: "
-                f"Уроки {lesson.confirmed}/{lesson.expected} ({pct(lesson.confirmed, lesson.expected)}), "
-                f"ДЗ {hw.confirmed}/{hw.expected} ({pct(hw.confirmed, hw.expected)})"
+            lesson_str = f"{lesson.confirmed}/{lesson.expected} ({pct(lesson.confirmed, lesson.expected)})"
+            hw_str = f"{hw.confirmed}/{hw.expected} ({pct(hw.confirmed, hw.expected)})"
+            print(f"  {subject_key}: Уроки {lesson_str}, ДЗ {hw_str}")
+            student_rows_csv.append(
+                {
+                    "student": student_id,
+                    "subject_key": subject_key,
+                    "lessons": lesson_str,
+                    "homeworks": hw_str,
+                }
             )
 
-    # Report 2: per subject (all students).
+    # Report 2: per subject (all students)
     print("\n\n=== По предметам (суммарно по всем студентам) ===")
-    # subject -> Counters lesson/hw
     subject_totals: Dict[str, Dict[str, Counters]] = defaultdict(dict)
     for (subject_key, kind), c in per_subject.items():
         subject_totals[subject_key][kind] = c
 
+    subject_rows_csv: List[Dict[str, str]] = []
     for subject_key in sorted(subject_totals.keys()):
         kinds = subject_totals[subject_key]
         lesson = kinds.get("lesson", Counters())
@@ -233,6 +381,76 @@ def main() -> int:
             f"Уроки {lesson.confirmed}/{lesson.expected} ({pct(lesson.confirmed, lesson.expected)}), "
             f"ДЗ {hw.confirmed}/{hw.expected} ({pct(hw.confirmed, hw.expected)})"
         )
+        subject_rows_csv.append(
+            {
+                "subject_key": subject_key,
+                "kind": "lesson",
+                "expected": str(lesson.expected),
+                "confirmed": str(lesson.confirmed),
+                "rate_percent": f"{pct_num(lesson.confirmed, lesson.expected):.2f}",
+            }
+        )
+        subject_rows_csv.append(
+            {
+                "subject_key": subject_key,
+                "kind": "homework",
+                "expected": str(hw.expected),
+                "confirmed": str(hw.confirmed),
+                "rate_percent": f"{pct_num(hw.confirmed, hw.expected):.2f}",
+            }
+        )
+
+    # Write files
+    student_csv_path = os.path.join(args.out_dir, "student_subject_summary.csv")
+    subject_csv_path = os.path.join(args.out_dir, "subject_summary.csv")
+    meta_json_path = os.path.join(args.out_dir, "report_meta.json")
+    dashboard_html_path = os.path.join(args.out_dir, "dashboard.html")
+
+    write_csv(
+        student_csv_path,
+        ["student", "subject_key", "lessons", "homeworks"],
+        [[r["student"], r["subject_key"], r["lessons"], r["homeworks"]] for r in student_rows_csv],
+    )
+    write_csv(
+        subject_csv_path,
+        ["subject_key", "kind", "expected", "confirmed", "rate_percent"],
+        [
+            [r["subject_key"], r["kind"], r["expected"], r["confirmed"], r["rate_percent"]]
+            for r in subject_rows_csv
+        ],
+    )
+
+    meta = {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "input_files": paths,
+        "only_week": args.only_week,
+        "weeks_seen": [{"week_start": ws, "week_end": we} for ws, we in weeks_list],
+        "rows_counted": total_rows,
+        "subject_status_counts": {
+            subj: dict(status_map) for subj, status_map in subject_diag.items()
+        },
+    }
+    with open(meta_json_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    chart_b64 = maybe_make_subject_chart(subject_rows_csv)
+    render_dashboard_html(
+        out_path=dashboard_html_path,
+        generated_at=meta["generated_at"],
+        weeks=weeks_list,
+        only_week=args.only_week,
+        source_files=paths,
+        diagnostics=subject_diag,
+        student_rows=student_rows_csv,
+        subject_rows=subject_rows_csv,
+        chart_b64=chart_b64,
+    )
+
+    print("\n=== Файлы отчёта ===")
+    print(f"- {student_csv_path}")
+    print(f"- {subject_csv_path}")
+    print(f"- {meta_json_path}")
+    print(f"- {dashboard_html_path}")
 
     return 0
 
