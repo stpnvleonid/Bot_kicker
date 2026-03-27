@@ -16,6 +16,7 @@
     "check-planner-sheet": "ts-node scripts/check-planner-sheet.ts",
     "debug-upcoming": "ts-node scripts/debug-upcoming.ts",
     "debug-routing": "ts-node scripts/debug-routing.ts",
+    "debug-exams-monitor": "ts-node scripts/debug-exams-monitor.ts",
     "backfill-event-subjects": "ts-node scripts/backfill-event-subjects.ts",
     "debug-subjects": "ts-node scripts/debug-subjects.ts",
     "debug-planner-export": "ts-node scripts/debug-planner-export.ts",

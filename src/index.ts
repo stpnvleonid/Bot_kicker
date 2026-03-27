@@ -25,6 +25,7 @@ import {
   handleAddAdmin,
   handleAdminHelpSectionCallback,
   handleAdminDebtsSubjectCallback,
+  handleAdminExamsMonitorCallback,
   handleSubjects,
   handleSubjectsCallback,
   handleLinkGroup,
@@ -36,6 +37,7 @@ import {
   handlePush,
   handleDebts,
   handleExportExamsWeek,
+  handleExamsMonitorWeek,
   handlePushReport,
   handlePushCallback,
   handleConfirmReminder,
@@ -283,6 +285,7 @@ async function main(): Promise<void> {
   bot.command('push', handlePush);
   bot.command('debts', handleDebts);
   bot.command('export_exams_week', handleExportExamsWeek);
+  bot.command('exams_monitor_week', handleExamsMonitorWeek);
   bot.command('push_report', handlePushReport);
   bot.command('groups', handleGroups);
   bot.command('events', handleEvents);
@@ -291,6 +294,7 @@ async function main(): Promise<void> {
   bot.command('planner_evening_now', handlePlannerEveningNow);
   bot.command('add_admin', handleAddAdmin);
   bot.action(/^adm_debt:/, handleAdminDebtsSubjectCallback);
+  bot.action(/^adm_exams_report:/, handleAdminExamsMonitorCallback);
   bot.action(/^admin_help:/, handleAdminHelpSectionCallback);
   bot.action(/^push_confirm_/, handlePushCallback);
   bot.action(/^confirm_15m_/, handleConfirmReminder);

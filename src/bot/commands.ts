@@ -22,6 +22,7 @@ import { selectPendingExamSubmissionsForStudent } from '../jobs/planner-exams';
 import { parseRuDateFromCaption, parseRuDdMmToIso } from '../utils/parse-ru-dd-mm';
 import { DEBTS_MENU_SUBJECT_KEYS, getAttendanceDebtsBySubject } from '../google/attendance-debts';
 import { exportExamsWeekCsv } from '../jobs/exams-export';
+import { buildExamsMonitorReport } from '../jobs/exams-monitor';
 
 export const BOT_VERSION = 'planner-back-button-v1';
 
@@ -350,9 +351,10 @@ function getAdminHelpSectionText(sectionId: string): { title: string; lines: str
         title: 'Успеваемость',
         lines: [
           '/export_exams_week YYYY-MM-DD — CSV по вебинарам/ДЗ exams (Пн–Сб, expected/confirmed, только student_id).',
+          '/exams_monitor_week YYYY-MM-DD [предмет] — диагностика exams (events/subjects/eligible/submissions).',
           '/debts <предмет> — долги из вкладки «Посещаемость» (Google Sheets).',
           '',
-          'Ниже — быстрый выбор предмета.',
+          'Ниже — быстрые кнопки долгов и exams-monitor по предметам.',
         ],
       };
     case 'admins':
@@ -420,16 +422,30 @@ export async function handleAdminHelpSectionCallback(ctx: Context): Promise<void
   const text = [...commonLines, title, '', ...lines].join('\n');
 
   if (sectionId === 'debts') {
-    const row1 = DEBTS_MENU_SUBJECT_KEYS.slice(0, 3).map((k) =>
+    const debtRow1 = DEBTS_MENU_SUBJECT_KEYS.slice(0, 3).map((k) =>
       Markup.button.callback(SUBJECT_TOPIC_NAMES[k] ?? k, `adm_debt:${k}`)
     );
-    const row2 = DEBTS_MENU_SUBJECT_KEYS.slice(3, 6).map((k) =>
+    const debtRow2 = DEBTS_MENU_SUBJECT_KEYS.slice(3, 6).map((k) =>
       Markup.button.callback(SUBJECT_TOPIC_NAMES[k] ?? k, `adm_debt:${k}`)
+    );
+    const examsAllRow = [Markup.button.callback('📊 Exams: все предметы', 'adm_exams_report:all')];
+    const examsRow1 = DEBTS_MENU_SUBJECT_KEYS.slice(0, 3).map((k) =>
+      Markup.button.callback(`📊 ${SUBJECT_TOPIC_NAMES[k] ?? k}`, `adm_exams_report:${k}`)
+    );
+    const examsRow2 = DEBTS_MENU_SUBJECT_KEYS.slice(3, 6).map((k) =>
+      Markup.button.callback(`📊 ${SUBJECT_TOPIC_NAMES[k] ?? k}`, `adm_exams_report:${k}`)
     );
     await ctx
       .editMessageText(text, {
         reply_markup: {
-          inline_keyboard: [row1, row2, [Markup.button.callback('« Назад к разделам', 'admin_help:back')]],
+          inline_keyboard: [
+            debtRow1,
+            debtRow2,
+            examsAllRow,
+            examsRow1,
+            examsRow2,
+            [Markup.button.callback('« Назад к разделам', 'admin_help:back')],
+          ],
         },
       })
       .catch(() => {});
@@ -2016,6 +2032,10 @@ function resolveSubjectKey(input: string): string | null {
   return null;
 }
 
+function isIsoDate(v: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
 function debtTypeFromAssignment(assignment: string): string {
   const normalized = assignment.replace(/\s+/g, ' ').trim();
   const left = normalized.split('—')[0]?.trim() ?? normalized;
@@ -2090,6 +2110,36 @@ async function sendDebtsReport(ctx: Context, subjectKey: string, opts: { announc
   }
 }
 
+async function sendExamsMonitorReport(
+  ctx: Context,
+  weekDateIso: string,
+  subjectKey: string | null,
+  opts: { announce?: boolean } = {}
+): Promise<void> {
+  const { announce = true } = opts;
+  if (announce) {
+    const label = subjectKey ? SUBJECT_TOPIC_NAMES[subjectKey] ?? subjectKey : 'Все предметы';
+    await ctx.reply(`Собираю diagnostics по exams за неделю (Пн–Сб), предмет: ${label}...`);
+  }
+  try {
+    const lines = buildExamsMonitorReport({ weekDateIso, subjectKey });
+    let chunk = '';
+    for (const line of lines) {
+      const next = chunk ? `${chunk}\n${line}` : line;
+      if (next.length > 3900) {
+        await ctx.reply(chunk);
+        chunk = line;
+      } else {
+        chunk = next;
+      }
+    }
+    if (chunk) await ctx.reply(chunk);
+  } catch (e) {
+    console.error('[ExamsMonitor] report error:', e);
+    await ctx.reply('Ошибка формирования exams monitor отчета. Подробности в логах.');
+  }
+}
+
 export async function handleDebts(ctx: Context): Promise<void> {
   if (!ctx.from || !isAdmin(ctx.from.id)) {
     await ctx.reply('Команда только для администраторов.');
@@ -2155,6 +2205,49 @@ export async function handleExportExamsWeek(ctx: Context): Promise<void> {
     console.error('[ExamsExport] /export_exams_week error:', e);
     await ctx.reply('Ошибка экспорта exams CSV. Подробности в логах.');
   }
+}
+
+/** Админ: текстовый мониторинг exams за неделю (Пн–Сб), опционально по предмету. */
+export async function handleExamsMonitorWeek(ctx: Context): Promise<void> {
+  if (!ctx.from || !isAdmin(ctx.from.id)) {
+    await ctx.reply('Команда только для администраторов.');
+    return;
+  }
+  const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+  const match = /\/exams_monitor_week(?:\s+(\d{4}-\d{2}-\d{2}))?(?:\s+(.+))?/i.exec(text || '');
+  const weekDateIso = match?.[1] ?? getDateInMoscow();
+  if (!isIsoDate(weekDateIso)) {
+    await ctx.reply('Использование: /exams_monitor_week YYYY-MM-DD [предмет]');
+    return;
+  }
+  const subjectInput = match?.[2]?.trim();
+  const subjectKey = subjectInput ? resolveSubjectKey(subjectInput) : null;
+  if (subjectInput && !subjectKey) {
+    await ctx.reply('Неизвестный предмет. Используйте ключ (informatics, physics, society...) или русское название.');
+    return;
+  }
+  await sendExamsMonitorReport(ctx, weekDateIso, subjectKey, { announce: true });
+}
+
+/** Кнопка exams-monitor в разделе «Успеваемость» админ-помощи. */
+export async function handleAdminExamsMonitorCallback(ctx: Context): Promise<void> {
+  const cb = ctx.callbackQuery;
+  if (!cb || !('data' in cb) || !ctx.from) return;
+  const data = cb.data as string;
+  if (!data.startsWith('adm_exams_report:')) return;
+  if (!isAdmin(ctx.from.id)) {
+    await ctx.answerCbQuery('Только для администраторов.');
+    return;
+  }
+  const raw = data.slice('adm_exams_report:'.length);
+  const key = raw === 'all' ? null : raw;
+  if (key && !DEBTS_MENU_KEY_SET.has(key)) {
+    await ctx.answerCbQuery('Неизвестный предмет.');
+    return;
+  }
+  const label = key ? SUBJECT_TOPIC_NAMES[key] ?? key : 'Все предметы';
+  await ctx.answerCbQuery(`Exams monitor: ${label}`);
+  await sendExamsMonitorReport(ctx, getDateInMoscow(), key, { announce: false });
 }
 
 /** Привязать текущий топик к предмету. Вызвать в группе, внутри нужного топика: /link_topic math или /link_topic Математика */
