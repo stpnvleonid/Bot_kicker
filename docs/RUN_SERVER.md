@@ -94,6 +94,40 @@ docker compose exec bot npm run debug-exams-monitor:prod -- 2026-03-23 --subject
 docker compose exec bot npm run exams-gap-check:prod -- 2026-03-23 2026-03-28
 ```
 
+Мини-регламент по exams-submissions:
+
+1) Штатный контроль (ежедневно/по необходимости)
+
+```bash
+docker compose exec bot npm run debug-exams-monitor:prod -- 2026-03-23 --subject physics
+docker compose exec bot npm run exams-gap-check:prod -- 2026-03-23 2026-03-28
+```
+
+Ожидаемо: в monitor нет `submissions=0` при `eligible>0`, в gap-check — `no gaps`.
+
+2) Если найден gap (`eligible>0`, `submissions=0`)
+
+```bash
+docker compose exec bot npm run exams-backfill:prod -- 2026-03-23 2026-03-28 2026-03-28
+docker compose exec bot npm run debug-exams-monitor:prod -- 2026-03-23 --subject physics
+docker compose exec bot npm run exams-gap-check:prod -- 2026-03-23 2026-03-28
+```
+
+Если gap остался — проверить логи:
+
+```bash
+docker compose logs bot --tail 200 | rg "Job6|Job7|ExamsBackfill|ExamsGapCheck|Calendar sync"
+```
+
+3) Экстренный ручной прогон после деплоя/инцидента
+
+```bash
+docker compose exec bot npm run exams-backfill:prod -- 2026-03-23 2026-03-28 2026-03-28
+docker compose exec bot npm run exams-gap-check:prod -- 2026-03-23 2026-03-28
+```
+
+После этого оставить фоновые Job6/Job7 в штатном режиме.
+
 ## 5) Частые проблемы
 
 - Бот не отвечает: проверь `BOT_TOKEN`, сетевой доступ к `api.telegram.org`, и startup-логи.
