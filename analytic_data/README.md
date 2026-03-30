@@ -48,11 +48,24 @@ python analytic_data/analyze_exams_csv.py --input analytic_data --db data/bot.sq
 - `report_meta.json` — метаданные и диагностика входных данных
 - `dashboard.html` — локальный HTML-дашборд (таблицы + график, если установлен matplotlib)
 
+Быстрый online-отчет в боте (для админа):
+
+- `/exams_week_summary YYYY-MM-DD [предмет]` — weekly summary в Telegram + CSV.
+
 ## Что считается «пройдено»
 
 - В CSV есть `status=pending|confirmed`.
 - «Пройдено» = `status=confirmed`.
 - «Ожидалось (expected)» = `pending + confirmed`.
+
+После фикса exams-приглашений:
+
+- все eligible студенты с `pending/rejected` submissions по дате получают вечерний экран с блоком «Обязательные exams на модерации» (даже если у них нет задач планера на эту дату);
+- это повышает шанс перевода `pending → confirmed` и делает итоговые проценты по предметам более репрезентативными.
+
+Новая рассылка по долгам недели:
+
+- `/exams_week_nudge YYYY-MM-DD [предмет]` — ставит в очередь DM-напоминания студентам, у которых за прошедшие дни недели есть `pending/rejected` exams.
 
 ## Проверка корректности данных
 

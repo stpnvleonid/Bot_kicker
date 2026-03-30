@@ -154,18 +154,31 @@ export function runPlannerEveningJobForDate(taskDate: string): void {
 
   const students = db
     .prepare(
-      `SELECT DISTINCT dt.student_id, s.telegram_user_id
-       FROM daily_tasks dt
-       JOIN students s ON s.id = dt.student_id
-       WHERE dt.task_date = ?
-         AND dt.status IN ('planned','partly_done','completed')
-         AND s.planner_enabled = 1
-         AND s.dm_blocked = 0`
+      `SELECT DISTINCT st.id AS student_id, st.telegram_user_id
+       FROM students st
+       WHERE st.planner_enabled = 1
+         AND st.dm_blocked = 0
+         AND (
+           EXISTS (
+             SELECT 1
+             FROM daily_tasks dt
+             WHERE dt.student_id = st.id
+               AND dt.task_date = ?
+               AND dt.status IN ('planned','partly_done','completed')
+           )
+           OR EXISTS (
+             SELECT 1
+             FROM planner_exam_submissions pes
+             WHERE pes.student_id = st.id
+               AND pes.lesson_date = ?
+               AND pes.status IN ('pending','rejected')
+           )
+         )`
     )
-    .all(taskDate) as Array<{ student_id: number; telegram_user_id: number }>;
+    .all(taskDate, taskDate) as Array<{ student_id: number; telegram_user_id: number }>;
 
   if (!students.length) {
-    console.log('[Planner] EveningForDate: no tasks for', taskDate);
+    console.log('[Planner] EveningForDate: no tasks or exams for', taskDate);
     return;
   }
 

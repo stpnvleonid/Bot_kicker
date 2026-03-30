@@ -37,6 +37,8 @@ import {
   handlePush,
   handleDebts,
   handleExportExamsWeek,
+  handleExamsWeekSummary,
+  handleExamsWeekNudge,
   handleExamsMonitorWeek,
   handlePushReport,
   handlePushCallback,
@@ -289,6 +291,8 @@ async function main(): Promise<void> {
   bot.command('push', handlePush);
   bot.command('debts', handleDebts);
   bot.command('export_exams_week', handleExportExamsWeek);
+  bot.command('exams_week_summary', handleExamsWeekSummary);
+  bot.command('exams_week_nudge', handleExamsWeekNudge);
   bot.command('exams_monitor_week', handleExamsMonitorWeek);
   bot.command('push_report', handlePushReport);
   bot.command('groups', handleGroups);

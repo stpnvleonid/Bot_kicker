@@ -23,6 +23,7 @@ import { parseRuDateFromCaption, parseRuDdMmToIso } from '../utils/parse-ru-dd-m
 import { DEBTS_MENU_SUBJECT_KEYS, getAttendanceDebtsBySubject } from '../google/attendance-debts';
 import { exportExamsWeekCsv } from '../jobs/exams-export';
 import { buildExamsMonitorReport } from '../jobs/exams-monitor';
+import { buildExamsWeekNudgeList, buildExamsWeekSummary, exportExamsWeekSummaryCsv } from '../jobs/exams-summary';
 
 export const BOT_VERSION = 'planner-back-button-v1';
 
@@ -351,6 +352,8 @@ function getAdminHelpSectionText(sectionId: string): { title: string; lines: str
         title: 'Успеваемость',
         lines: [
           '/export_exams_week YYYY-MM-DD — CSV по вебинарам/ДЗ exams (Пн–Сб, expected/confirmed, только student_id).',
+          '/exams_week_summary YYYY-MM-DD [предмет] — weekly summary: expected/confirmed по студентам и предметам.',
+          '/exams_week_nudge YYYY-MM-DD [предмет] — отправить DM-напоминания студентам с pending/rejected за неделю.',
           '/exams_monitor_week YYYY-MM-DD [предмет] — диагностика exams (events/subjects/eligible/submissions).',
           '/debts <предмет> — долги из вкладки «Посещаемость» (Google Sheets).',
           '',
@@ -2204,6 +2207,119 @@ export async function handleExportExamsWeek(ctx: Context): Promise<void> {
   } catch (e) {
     console.error('[ExamsExport] /export_exams_week error:', e);
     await ctx.reply('Ошибка экспорта exams CSV. Подробности в логах.');
+  }
+}
+
+/** Админ: weekly summary по exams (expected/confirmed) + CSV. */
+export async function handleExamsWeekSummary(ctx: Context): Promise<void> {
+  if (!ctx.from || !isAdmin(ctx.from.id)) {
+    await ctx.reply('Команда только для администраторов.');
+    return;
+  }
+  const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+  const match = /\/exams_week_summary\s+(\d{4}-\d{2}-\d{2})(?:\s+(.+))?/i.exec(text || '');
+  const weekDateIso = match?.[1];
+  if (!weekDateIso || !isIsoDate(weekDateIso)) {
+    await ctx.reply('Использование: /exams_week_summary YYYY-MM-DD [предмет]');
+    return;
+  }
+  const subjectInput = match?.[2]?.trim();
+  const subjectKey = subjectInput ? resolveSubjectKey(subjectInput) : null;
+  if (subjectInput && !subjectKey) {
+    await ctx.reply('Неизвестный предмет. Используйте ключ (informatics, physics, society...) или русское название.');
+    return;
+  }
+
+  try {
+    const summary = buildExamsWeekSummary({ weekDateIso, subjectKey });
+    const subjectRows = summary.perSubject;
+    const header = [
+      `Exams weekly summary: ${summary.weekStart} — ${summary.effectiveEnd}${summary.effectiveEnd !== summary.weekEnd ? ` (week end: ${summary.weekEnd})` : ''}`,
+      `Предмет: ${subjectKey ? (SUBJECT_TOPIC_NAMES[subjectKey] ?? subjectKey) : 'все'}`,
+      '',
+      'Суммарно по предметам:',
+    ];
+    const lines = subjectRows.length
+      ? subjectRows.map((r) => {
+          const label = SUBJECT_TOPIC_NAMES[r.subjectKey] ?? r.subjectKey;
+          const rate = r.expected > 0 ? Math.round((r.confirmed * 100) / r.expected) : 0;
+          const kindRu = r.kind === 'lesson' ? 'Уроки' : 'ДЗ';
+          return `- ${label} (${kindRu}): ${r.confirmed}/${r.expected} (${rate}%)`;
+        })
+      : ['- Нет данных по выбранному фильтру.'];
+    await ctx.reply([...header, ...lines].join('\n'));
+
+    const csv = exportExamsWeekSummaryCsv({ weekDateIso, subjectKey });
+    await ctx.replyWithDocument(
+      { source: csv.filePath, filename: csv.fileName } as any,
+      { caption: `weekly summary CSV ${csv.weekStart} — ${csv.effectiveEnd} (rows=${csv.rows})` } as any
+    );
+  } catch (e) {
+    console.error('[ExamsSummary] /exams_week_summary error:', e);
+    await ctx.reply('Ошибка построения weekly summary. Подробности в логах.');
+  }
+}
+
+/** Админ: enqueue DM-напоминаний по pending/rejected exams за неделю. */
+export async function handleExamsWeekNudge(ctx: Context): Promise<void> {
+  if (!ctx.from || !isAdmin(ctx.from.id)) {
+    await ctx.reply('Команда только для администраторов.');
+    return;
+  }
+  const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+  const match = /\/exams_week_nudge\s+(\d{4}-\d{2}-\d{2})(?:\s+(.+))?/i.exec(text || '');
+  const weekDateIso = match?.[1];
+  if (!weekDateIso || !isIsoDate(weekDateIso)) {
+    await ctx.reply('Использование: /exams_week_nudge YYYY-MM-DD [предмет]');
+    return;
+  }
+  const subjectInput = match?.[2]?.trim();
+  const subjectKey = subjectInput ? resolveSubjectKey(subjectInput) : null;
+  if (subjectInput && !subjectKey) {
+    await ctx.reply('Неизвестный предмет. Используйте ключ (informatics, physics, society...) или русское название.');
+    return;
+  }
+
+  try {
+    const nudge = buildExamsWeekNudgeList({ weekDateIso, subjectKey });
+    if (!nudge.items.length) {
+      await ctx.reply(`Нет кандидатов для nudge за ${nudge.weekStart} — ${nudge.effectiveEnd}.`);
+      return;
+    }
+
+    const db = getDb();
+    const alreadyStmt = db.prepare(
+      `SELECT 1
+       FROM send_queue
+       WHERE type = 'dm'
+         AND notification_type = 'exams_week_nudge'
+         AND student_id = ?
+         AND text = ?
+         AND status IN ('pending','processing','sent')
+       LIMIT 1`
+    );
+    const insertStmt = db.prepare(
+      `INSERT INTO send_queue (type, chat_id, message_thread_id, text, event_id, student_id, notification_type, status)
+       VALUES ('dm', ?, NULL, ?, NULL, ?, 'exams_week_nudge', 'pending')`
+    );
+
+    let enqueued = 0;
+    let skipped = 0;
+    for (const item of nudge.items) {
+      const exists = alreadyStmt.get(item.studentId, item.text);
+      if (exists) {
+        skipped += 1;
+        continue;
+      }
+      insertStmt.run(item.telegramUserId, item.text, item.studentId);
+      enqueued += 1;
+    }
+    await ctx.reply(
+      `Exams nudge за ${nudge.weekStart} — ${nudge.effectiveEnd}: поставлено в очередь ${enqueued}, пропущено как дубликаты ${skipped}.`
+    );
+  } catch (e) {
+    console.error('[ExamsNudge] /exams_week_nudge error:', e);
+    await ctx.reply('Ошибка постановки exams nudge в очередь. Подробности в логах.');
   }
 }
 
