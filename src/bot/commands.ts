@@ -24,6 +24,7 @@ import { DEBTS_MENU_SUBJECT_KEYS, getAttendanceDebtsBySubject } from '../google/
 import { exportExamsWeekCsv } from '../jobs/exams-export';
 import { buildExamsMonitorReport } from '../jobs/exams-monitor';
 import { buildExamsWeekNudgeList, buildExamsWeekSummary, exportExamsWeekSummaryCsv } from '../jobs/exams-summary';
+import { buildExamsReviewQueue } from '../jobs/exams-review-queue';
 
 export const BOT_VERSION = 'planner-back-button-v1';
 
@@ -47,6 +48,17 @@ const startAwaitingFio = new Map<number, { studentId: number }>();
  */
 const plannerExamAwaitingPhoto = new Map<number, { submissionId: number }>();
 const plannerExamAwaitingCompletionDate = new Map<number, { submissionId: number }>();
+type ExamsReviewSession = {
+  weekStart: string;
+  effectiveEnd: string;
+  subjectKey: string | null;
+  submissionIds: number[];
+  index: number;
+  confirmed: number;
+  rejected: number;
+  skipped: number;
+};
+const examsReviewSessionByAdmin = new Map<number, ExamsReviewSession>();
 
 /** Унифицированные безопасные вызовы Telegram API с простыми ретраями. */
 async function safeAnswerCbQuery(ctx: Context, text?: string): Promise<void> {
@@ -354,6 +366,8 @@ function getAdminHelpSectionText(sectionId: string): { title: string; lines: str
           '/export_exams_week YYYY-MM-DD — CSV по вебинарам/ДЗ exams (Пн–Сб, expected/confirmed, только student_id).',
           '/exams_week_summary YYYY-MM-DD [предмет] — weekly summary: expected/confirmed по студентам и предметам.',
           '/exams_week_nudge YYYY-MM-DD [предмет] — отправить DM-напоминания студентам с pending/rejected за неделю.',
+          '/exams_review_queue [YYYY-MM-DD] [предмет] — показать очередь модерации (pending + evidence).',
+          '/exams_review_start [YYYY-MM-DD] [предмет] — пошагово пройти очередь: подтвердить/отклонить/пропустить.',
           '/exams_monitor_week YYYY-MM-DD [предмет] — диагностика exams (events/subjects/eligible/submissions).',
           '/debts <предмет> — долги из вкладки «Посещаемость» (Google Sheets).',
           '',
@@ -2143,6 +2157,76 @@ async function sendExamsMonitorReport(
   }
 }
 
+function formatExamsReviewSessionSummary(s: ExamsReviewSession): string {
+  return [
+    `Модерация очереди за ${s.weekStart} — ${s.effectiveEnd}`,
+    `Подтверждено: ${s.confirmed}`,
+    `Отклонено: ${s.rejected}`,
+    `Пропущено: ${s.skipped}`,
+    `Всего в очереди: ${s.submissionIds.length}`,
+  ].join('\n');
+}
+
+async function sendNextExamsReviewItem(ctx: Context, adminId: number): Promise<void> {
+  const session = examsReviewSessionByAdmin.get(adminId);
+  if (!session) {
+    await ctx.reply('Сессия модерации не активна. Запустите /exams_review_start.');
+    return;
+  }
+
+  while (session.index < session.submissionIds.length) {
+    const submissionId = session.submissionIds[session.index];
+    const moderation = getSubmissionForModeration(submissionId);
+    if (!moderation || moderation.submission.status !== 'pending' || !moderation.submission.evidence_file_id) {
+      session.skipped += 1;
+      session.index += 1;
+      continue;
+    }
+    const { submission, student } = moderation;
+    const evidenceFileId = submission.evidence_file_id;
+    if (!evidenceFileId) {
+      session.skipped += 1;
+      session.index += 1;
+      continue;
+    }
+    const subjectLabel = submission.subject_key ? (SUBJECT_TOPIC_NAMES[submission.subject_key] ?? submission.subject_key) : '(предмет не определён)';
+    const itemTitle = `${subjectLabel} ${submission.kind === 'lesson' ? 'Урок' : 'ДЗ'} ${new Date(`${submission.lesson_date}T00:00:00.000Z`).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}`;
+    const studentName = `${student.last_name ?? ''} ${student.first_name ?? ''}`.trim();
+    const caption = [
+      `Проверка ${session.index + 1}/${session.submissionIds.length}: ${itemTitle}`,
+      `ФИО: ${studentName}${student.telegram_username ? ` (@${student.telegram_username})` : ''}`,
+      `Дата выполнения: ${submission.completion_date ?? '—'}`,
+      `Статус: ${submission.status}`,
+      '',
+      'Действия:',
+    ].join('\n');
+
+    await ctx.telegram.sendPhoto(
+      adminId,
+      evidenceFileId,
+      {
+        caption,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              Markup.button.callback('✅ Подтвердить', `planner_exam_review_confirm_${submission.id}`),
+              Markup.button.callback('❌ Отклонить', `planner_exam_review_reject_${submission.id}`),
+            ],
+            [
+              Markup.button.callback('⏭ Пропустить', `planner_exam_review_skip_${submission.id}`),
+              Markup.button.callback('⏹ Завершить', 'planner_exam_review_stop'),
+            ],
+          ],
+        } as any,
+      } as any
+    );
+    return;
+  }
+
+  examsReviewSessionByAdmin.delete(adminId);
+  await ctx.reply('Очередь модерации завершена.\n\n' + formatExamsReviewSessionSummary(session));
+}
+
 export async function handleDebts(ctx: Context): Promise<void> {
   if (!ctx.from || !isAdmin(ctx.from.id)) {
     await ctx.reply('Команда только для администраторов.');
@@ -2321,6 +2405,193 @@ export async function handleExamsWeekNudge(ctx: Context): Promise<void> {
     console.error('[ExamsNudge] /exams_week_nudge error:', e);
     await ctx.reply('Ошибка постановки exams nudge в очередь. Подробности в логах.');
   }
+}
+
+/** Админ: показать размер очереди модерации exams (pending + evidence). */
+export async function handleExamsReviewQueue(ctx: Context): Promise<void> {
+  if (!ctx.from || !isAdmin(ctx.from.id)) {
+    await ctx.reply('Команда только для администраторов.');
+    return;
+  }
+  const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+  const match = /\/exams_review_queue(?:\s+(\d{4}-\d{2}-\d{2}))?(?:\s+(.+))?/i.exec(text || '');
+  const weekDateIso = match?.[1] ?? getDateInMoscow();
+  if (!isIsoDate(weekDateIso)) {
+    await ctx.reply('Использование: /exams_review_queue [YYYY-MM-DD] [предмет]');
+    return;
+  }
+  const subjectInput = match?.[2]?.trim();
+  const subjectKey = subjectInput ? resolveSubjectKey(subjectInput) : null;
+  if (subjectInput && !subjectKey) {
+    await ctx.reply('Неизвестный предмет. Используйте ключ (informatics, physics, society...) или русское название.');
+    return;
+  }
+
+  const queue = buildExamsReviewQueue({ weekDateIso, subjectKey });
+  const title = `Очередь модерации exams: ${queue.weekStart} — ${queue.effectiveEnd}`;
+  const filterLine = `Фильтр предмета: ${subjectKey ? (SUBJECT_TOPIC_NAMES[subjectKey] ?? subjectKey) : 'все'}`;
+  const countLine = `Всего pending с evidence: ${queue.items.length}`;
+  const bySubject = queue.bySubjectKind.length
+    ? queue.bySubjectKind.map((r) => {
+        const label = SUBJECT_TOPIC_NAMES[r.subjectKey] ?? r.subjectKey;
+        const kindRu = r.kind === 'lesson' ? 'Уроки' : 'ДЗ';
+        return `- ${label} (${kindRu}): ${r.count}`;
+      })
+    : ['- Пусто'];
+  const body = [title, filterLine, countLine, '', 'Разбивка:', ...bySubject].join('\n');
+  const subjectParam = subjectKey ?? 'all';
+  await ctx.reply(body, {
+    reply_markup: {
+      inline_keyboard: [
+        [Markup.button.callback('Начать модерацию', `adm_exams_review_start:${weekDateIso}:${subjectParam}`)],
+      ],
+    },
+  });
+}
+
+/** Админ: начать пошаговую модерацию очереди exams. */
+export async function handleExamsReviewStart(ctx: Context): Promise<void> {
+  if (!ctx.from || !isAdmin(ctx.from.id)) {
+    await ctx.reply('Команда только для администраторов.');
+    return;
+  }
+  const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+  const match = /\/exams_review_start(?:\s+(\d{4}-\d{2}-\d{2}))?(?:\s+(.+))?/i.exec(text || '');
+  const weekDateIso = match?.[1] ?? getDateInMoscow();
+  if (!isIsoDate(weekDateIso)) {
+    await ctx.reply('Использование: /exams_review_start [YYYY-MM-DD] [предмет]');
+    return;
+  }
+  const subjectInput = match?.[2]?.trim();
+  const subjectKey = subjectInput ? resolveSubjectKey(subjectInput) : null;
+  if (subjectInput && !subjectKey) {
+    await ctx.reply('Неизвестный предмет. Используйте ключ (informatics, physics, society...) или русское название.');
+    return;
+  }
+
+  const queue = buildExamsReviewQueue({ weekDateIso, subjectKey });
+  if (!queue.items.length) {
+    await ctx.reply(`Очередь модерации пуста за ${queue.weekStart} — ${queue.effectiveEnd}.`);
+    return;
+  }
+  examsReviewSessionByAdmin.set(ctx.from.id, {
+    weekStart: queue.weekStart,
+    effectiveEnd: queue.effectiveEnd,
+    subjectKey,
+    submissionIds: queue.items.map((i) => i.submissionId),
+    index: 0,
+    confirmed: 0,
+    rejected: 0,
+    skipped: 0,
+  });
+  await ctx.reply(
+    `Запускаю модерацию очереди (${queue.items.length} шт.) за ${queue.weekStart} — ${queue.effectiveEnd}.`
+  );
+  await sendNextExamsReviewItem(ctx, ctx.from.id);
+}
+
+/** Кнопка старта пошаговой модерации из /exams_review_queue. */
+export async function handleAdminExamsReviewStartCallback(ctx: Context): Promise<void> {
+  const cb = ctx.callbackQuery;
+  if (!cb || !('data' in cb) || !ctx.from) return;
+  const data = cb.data as string;
+  if (!data.startsWith('adm_exams_review_start:')) return;
+  if (!isAdmin(ctx.from.id)) {
+    await safeAnswerCbQuery(ctx, 'Только для администраторов.');
+    return;
+  }
+
+  const payload = data.slice('adm_exams_review_start:'.length).split(':');
+  const weekDateIso = payload[0] ?? getDateInMoscow();
+  const subjectRaw = payload[1] ?? 'all';
+  const subjectKey = subjectRaw === 'all' ? null : subjectRaw;
+  if (!isIsoDate(weekDateIso)) {
+    await safeAnswerCbQuery(ctx, 'Неверная дата.');
+    return;
+  }
+  if (subjectKey && !DEBTS_MENU_KEY_SET.has(subjectKey)) {
+    await safeAnswerCbQuery(ctx, 'Неизвестный предмет.');
+    return;
+  }
+
+  const queue = buildExamsReviewQueue({ weekDateIso, subjectKey });
+  if (!queue.items.length) {
+    await safeAnswerCbQuery(ctx, 'Очередь пуста.');
+    return;
+  }
+  examsReviewSessionByAdmin.set(ctx.from.id, {
+    weekStart: queue.weekStart,
+    effectiveEnd: queue.effectiveEnd,
+    subjectKey,
+    submissionIds: queue.items.map((i) => i.submissionId),
+    index: 0,
+    confirmed: 0,
+    rejected: 0,
+    skipped: 0,
+  });
+  await safeAnswerCbQuery(ctx, 'Старт модерации...');
+  await ctx.reply(
+    `Запускаю модерацию очереди (${queue.items.length} шт.) за ${queue.weekStart} — ${queue.effectiveEnd}.`
+  );
+  await sendNextExamsReviewItem(ctx, ctx.from.id);
+}
+
+/** Пошаговая модерация: confirm/reject/skip/stop. */
+export async function handleExamsReviewStepCallback(ctx: Context): Promise<void> {
+  const cb = ctx.callbackQuery;
+  if (!cb || !('data' in cb) || !ctx.from) return;
+  const data = cb.data as string;
+  const isAction =
+    data.startsWith('planner_exam_review_confirm_') ||
+    data.startsWith('planner_exam_review_reject_') ||
+    data.startsWith('planner_exam_review_skip_') ||
+    data === 'planner_exam_review_stop';
+  if (!isAction) return;
+  if (!isAdmin(ctx.from.id)) {
+    await safeAnswerCbQuery(ctx, 'Команда только для администраторов.');
+    return;
+  }
+
+  const session = examsReviewSessionByAdmin.get(ctx.from.id);
+  if (!session) {
+    await safeAnswerCbQuery(ctx, 'Сессия не активна. Запустите /exams_review_start.');
+    return;
+  }
+
+  if (data === 'planner_exam_review_stop') {
+    examsReviewSessionByAdmin.delete(ctx.from.id);
+    await safeAnswerCbQuery(ctx, 'Остановлено.');
+    await ctx.reply('Модерация остановлена.\n\n' + formatExamsReviewSessionSummary(session));
+    return;
+  }
+
+  const currentSubmissionId = session.submissionIds[session.index];
+  const submissionId = parseInt(
+    data
+      .replace('planner_exam_review_confirm_', '')
+      .replace('planner_exam_review_reject_', '')
+      .replace('planner_exam_review_skip_', ''),
+    10
+  );
+  if (!Number.isFinite(submissionId) || submissionId !== currentSubmissionId) {
+    await safeAnswerCbQuery(ctx, 'Это не текущий элемент очереди.');
+    return;
+  }
+
+  if (data.startsWith('planner_exam_review_confirm_')) {
+    confirmExamSubmission(submissionId, ctx.from.id);
+    session.confirmed += 1;
+    await safeAnswerCbQuery(ctx, 'Подтверждено.');
+  } else if (data.startsWith('planner_exam_review_reject_')) {
+    rejectExamSubmission(submissionId, ctx.from.id);
+    session.rejected += 1;
+    await safeAnswerCbQuery(ctx, 'Отклонено.');
+  } else {
+    session.skipped += 1;
+    await safeAnswerCbQuery(ctx, 'Пропущено.');
+  }
+  session.index += 1;
+  await sendNextExamsReviewItem(ctx, ctx.from.id);
 }
 
 /** Админ: текстовый мониторинг exams за неделю (Пн–Сб), опционально по предмету. */

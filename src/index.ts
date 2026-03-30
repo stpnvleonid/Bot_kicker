@@ -39,7 +39,11 @@ import {
   handleExportExamsWeek,
   handleExamsWeekSummary,
   handleExamsWeekNudge,
+  handleExamsReviewQueue,
+  handleExamsReviewStart,
   handleExamsMonitorWeek,
+  handleAdminExamsReviewStartCallback,
+  handleExamsReviewStepCallback,
   handlePushReport,
   handlePushCallback,
   handleConfirmReminder,
@@ -293,6 +297,8 @@ async function main(): Promise<void> {
   bot.command('export_exams_week', handleExportExamsWeek);
   bot.command('exams_week_summary', handleExamsWeekSummary);
   bot.command('exams_week_nudge', handleExamsWeekNudge);
+  bot.command('exams_review_queue', handleExamsReviewQueue);
+  bot.command('exams_review_start', handleExamsReviewStart);
   bot.command('exams_monitor_week', handleExamsMonitorWeek);
   bot.command('push_report', handlePushReport);
   bot.command('groups', handleGroups);
@@ -303,6 +309,7 @@ async function main(): Promise<void> {
   bot.command('add_admin', handleAddAdmin);
   bot.action(/^adm_debt:/, handleAdminDebtsSubjectCallback);
   bot.action(/^adm_exams_report:/, handleAdminExamsMonitorCallback);
+  bot.action(/^adm_exams_review_start:/, handleAdminExamsReviewStartCallback);
   bot.action(/^admin_help:/, handleAdminHelpSectionCallback);
   bot.action(/^push_confirm_/, handlePushCallback);
   bot.action(/^confirm_15m_/, handleConfirmReminder);
@@ -322,6 +329,10 @@ async function main(): Promise<void> {
   bot.action(/^planner_exam_upload_/, handlePlannerExamUpload);
   bot.action(/^planner_exam_admin_confirm_/, handlePlannerExamAdminConfirm);
   bot.action(/^planner_exam_admin_reject_/, handlePlannerExamAdminReject);
+  bot.action(/^planner_exam_review_confirm_/, handleExamsReviewStepCallback);
+  bot.action(/^planner_exam_review_reject_/, handleExamsReviewStepCallback);
+  bot.action(/^planner_exam_review_skip_/, handleExamsReviewStepCallback);
+  bot.action('planner_exam_review_stop', handleExamsReviewStepCallback);
   // Сначала дата для exams-модерации: иначе handlePlannerText перехватывает текст и не вызывает next() — второй хендлер не срабатывал.
   bot.on('text', handlePlannerExamCompletionDateText);
   bot.on('text', handlePlannerText);

@@ -51,6 +51,8 @@ python analytic_data/analyze_exams_csv.py --input analytic_data --db data/bot.sq
 Быстрый online-отчет в боте (для админа):
 
 - `/exams_week_summary YYYY-MM-DD [предмет]` — weekly summary в Telegram + CSV.
+- `/exams_review_queue [YYYY-MM-DD] [предмет]` — очередь модерации (pending с evidence) без SQL.
+- `/exams_review_start [YYYY-MM-DD] [предмет]` — пошаговая модерация очереди в Telegram.
 
 ## Что считается «пройдено»
 
