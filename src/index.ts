@@ -70,9 +70,15 @@ import {
   BOT_VERSION,
   handlePlannerExamUpload,
   handlePlannerExamPhoto,
+  handlePlannerExamDocument,
   handlePlannerExamCompletionDateText,
   handlePlannerExamAdminConfirm,
   handlePlannerExamAdminReject,
+  handleExamsReport,
+  handleExamsReportOpen,
+  handleExamsReportMore,
+  handleExamsReportCancel,
+  handleExamsReportUpload,
 } from './bot/commands';
 import { runCalendarSyncJob } from './jobs/calendar-sync';
 import { runNotificationSchedulerJob } from './jobs/notification-scheduler';
@@ -281,6 +287,7 @@ async function main(): Promise<void> {
   bot.command('settings', handleSettings);
   bot.command('subjects', handleSubjects);
   bot.command('planner', handlePlannerInfo);
+  bot.command('exams_report', handleExamsReport);
   bot.command('planner_remind', handlePlannerRemind);
   bot.command('planner_upcoming', handlePlannerUpcoming);
   bot.command('planner_export_now', handlePlannerExportNow);
@@ -326,6 +333,10 @@ async function main(): Promise<void> {
   bot.action('planner_done_summary', handlePlannerDoneSummary);
   bot.action(/^planner_done_set_/, handlePlannerDoneToggle);
   bot.action('planner_back_to_tasks', handlePlannerBackToTasks);
+  bot.action('exams_report_open', handleExamsReportOpen);
+  bot.action(/^exams_report_more_/, handleExamsReportMore);
+  bot.action('exams_report_cancel', handleExamsReportCancel);
+  bot.action(/^exams_report_upload_/, handleExamsReportUpload);
   bot.action(/^planner_exam_upload_/, handlePlannerExamUpload);
   bot.action(/^planner_exam_admin_confirm_/, handlePlannerExamAdminConfirm);
   bot.action(/^planner_exam_admin_reject_/, handlePlannerExamAdminReject);
@@ -337,6 +348,7 @@ async function main(): Promise<void> {
   bot.on('text', handlePlannerExamCompletionDateText);
   bot.on('text', handlePlannerText);
   bot.on('photo', handlePlannerExamPhoto);
+  bot.on('document', handlePlannerExamDocument);
 
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 

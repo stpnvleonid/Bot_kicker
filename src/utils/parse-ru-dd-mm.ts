@@ -18,6 +18,9 @@ function normalizeToken(s: string): string {
     .toLowerCase()
     .replace(/\./g, '')
     .replace(/,/g, ' ')
+    // Для даты принимаем любые разделители между токенами (07-03, 07/03, 07_03, 07.03).
+    // Также это помогает случаям вроде "ДЗ-07-03" — выделяем числа как отдельные токены.
+    .replace(/[-/._]+/g, ' ')
     .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
     .trim();
 }
@@ -41,7 +44,7 @@ function inferYearForDdMm(mm: number, dd: number, referenceDate: Date): number {
 
 export function parseRuDdMmToIso(input: string, referenceDate: Date = new Date()): string | null {
   // Принимаем форматы:
-  // - "07 03", "7 3"
+  // - "07 03", "7 3", "07-03", "07/03", "07_03"
   // - "07 марта", "7 мар", "7марта"
   // Возвращаем ISO-дату YYYY-MM-DD (в "год инференс" через ±1 год относительно referenceDate).
   if (!input) return null;
@@ -49,8 +52,8 @@ export function parseRuDdMmToIso(input: string, referenceDate: Date = new Date()
   const parts = norm.split(/\s+/).filter(Boolean);
   if (parts.length < 2) return null;
 
-  const d = parseInt(parts[0], 10);
-  if (!Number.isFinite(d) || d < 1 || d > 31) return null;
+  const a = parseInt(parts[0], 10);
+  if (!Number.isFinite(a) || a < 1 || a > 31) return null;
 
   const mToken = parts.slice(1).join(' ');
   const mDigits = parseInt(mToken, 10);
@@ -66,10 +69,34 @@ export function parseRuDdMmToIso(input: string, referenceDate: Date = new Date()
       }
     }
   }
-  if (!m) return null;
+  if (!m) {
+    // Возможный кейс с двумя числами, где второе >12 (например "03-25"):
+    // по умолчанию пытаемся как ДД-ММ (03-25 невалидно), затем пробуем свап (25-03).
+    const b = parseInt(mToken, 10);
+    if (Number.isFinite(b) && b >= 1 && b <= 31) {
+      // Сначала ДД-ММ
+      const isoPrimary = buildIsoIfValid({ dd: a, mm: b, referenceDate });
+      if (isoPrimary) return isoPrimary;
+      // Затем MM-DD (swap)
+      const isoSwap = buildIsoIfValid({ dd: b, mm: a, referenceDate });
+      if (isoSwap) return isoSwap;
+    }
+    return null;
+  }
 
-  const y = inferYearForDdMm(m, d, referenceDate);
-  const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  // Основное правило: трактуем как ДД-ММ. Если невалидно (например "03-25"), пробуем свап (25-03).
+  return (
+    buildIsoIfValid({ dd: a, mm: m, referenceDate }) ??
+    (Number.isFinite(mDigits) ? buildIsoIfValid({ dd: mDigits, mm: a, referenceDate }) : null)
+  );
+}
+
+function buildIsoIfValid(params: { dd: number; mm: number; referenceDate: Date }): string | null {
+  const { dd, mm, referenceDate } = params;
+  if (mm < 1 || mm > 12) return null;
+  if (dd < 1 || dd > 31) return null;
+  const y = inferYearForDdMm(mm, dd, referenceDate);
+  const iso = `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 
   // Проверяем валидность даты (например "31 апреля").
   const dt = new Date(`${iso}T00:00:00.000Z`);
@@ -77,7 +104,7 @@ export function parseRuDdMmToIso(input: string, referenceDate: Date = new Date()
   const checkY = dt.getUTCFullYear();
   const checkM = dt.getUTCMonth() + 1;
   const checkD = dt.getUTCDate();
-  if (checkY !== y || checkM !== m || checkD !== d) return null;
+  if (checkY !== y || checkM !== mm || checkD !== dd) return null;
 
   return iso;
 }

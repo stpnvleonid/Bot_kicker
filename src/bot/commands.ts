@@ -43,11 +43,11 @@ const startAwaitingFio = new Map<number, { studentId: number }>();
 
 /**
  * Mandatory "exams" evidence flow:
- * 1) plannerExamAwaitingPhoto: пользователь нажал кнопку и должен прислать фото
+ * 1) examAwaitingPhoto: пользователь выбрал строку и должен прислать фото/скрин
  * 2) Дата: в подписи к фото (предпочтительно) или отдельным сообщением DD MM
  */
-const plannerExamAwaitingPhoto = new Map<number, { submissionId: number }>();
-const plannerExamAwaitingCompletionDate = new Map<number, { submissionId: number }>();
+const examAwaitingPhoto = new Map<number, { submissionId: number }>();
+const examAwaitingCompletionDate = new Map<number, { submissionId: number }>();
 type ExamsReviewSession = {
   weekStart: string;
   effectiveEnd: string;
@@ -167,6 +167,75 @@ async function buildMandatoryExamsPreview(studentId: number, taskDateIso: string
   return lines;
 }
 
+async function buildExamsReportPayload(params: {
+  studentId: number;
+  screenDateIso: string;
+  page: number;
+  pageSize: number;
+}): Promise<{ text: string; inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }> {
+  const { studentId, screenDateIso, page, pageSize } = params;
+  const exam = await selectPendingExamSubmissionsForStudent({
+    studentId,
+    screenDateIso,
+    maxLessons: 999,
+    maxHomeworks: 999,
+    markPromptedAt: false,
+  }).catch((e) => {
+    console.error('[ExamsReport] Failed to build pending list:', e);
+    return { selected: [], totalLessons: 0, totalHomeworks: 0, totalPending: 0 };
+  });
+
+  const total = exam.selected.length;
+  if (!total) {
+    return {
+      text: [
+        'Отчёт по exams (урок/ДЗ):',
+        '',
+        'Сейчас нет обязательных exams на модерации.',
+        'Если ожидаешь строку — попробуй позже (она появляется после синхронизации расписания).',
+      ].join('\n'),
+      inline_keyboard: [[{ text: '⏹ Отмена', callback_data: 'exams_report_cancel' }]],
+    };
+  }
+
+  const safePage = Math.max(0, page);
+  const start = safePage * pageSize;
+  const end = Math.min(total, start + pageSize);
+  const slice = exam.selected.slice(start, end);
+
+  const lines: string[] = [];
+  lines.push('Отчёт по exams (урок/ДЗ):');
+  lines.push('');
+  lines.push(`Незакрытые: ${exam.totalPending} (Урок: ${exam.totalLessons}, ДЗ: ${exam.totalHomeworks})`);
+  lines.push('');
+  for (const s of slice) {
+    const st = s.status === 'rejected' ? 'отклонено' : 'в ожидании';
+    const completionDate = s.completionDateLabel ? ` (дата сдачи: ${s.completionDateLabel})` : '';
+    const lastConfirmed = s.lastConfirmedCompletionDateLabel ? ` (последнее подтверждено: ${s.lastConfirmedCompletionDateLabel})` : '';
+    lines.push(`• ${s.itemTitle} — ${st}${completionDate}${lastConfirmed}`);
+  }
+  if (total > end) {
+    lines.push('');
+    lines.push('Нажми «Показать ещё», чтобы увидеть следующие строки.');
+  }
+
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (const s of slice) {
+    keyboard.push([
+      {
+        text: s.status === 'rejected' ? '↩ Фото заново' : `📸 Фото ${s.itemTitle}`,
+        callback_data: `exams_report_upload_${s.id}`,
+      },
+    ]);
+  }
+  if (total > end) {
+    keyboard.push([{ text: '🔄 Показать ещё', callback_data: `exams_report_more_${safePage + 1}` }]);
+  }
+  keyboard.push([{ text: '⏹ Отмена', callback_data: 'exams_report_cancel' }]);
+
+  return { text: lines.join('\n'), inline_keyboard: keyboard };
+}
+
 /** Текст и клавиатура экрана «Отметь выполненные задачи на сегодня (дата)». */
 async function buildPlannerDoneSummaryPayload(
   studentId: number,
@@ -238,6 +307,7 @@ async function buildPlannerDoneSummaryPayload(
         callback_data: `planner_exam_upload_${s.id}`,
       },
     ]),
+    [{ text: '📸 Отчёт по exams', callback_data: 'exams_report_open' }],
     [{ text: 'Вернуться к задачам', callback_data: 'planner_back_to_tasks' }],
   ];
 
@@ -252,6 +322,21 @@ async function getOrCreateStudentId(ctx: Context): Promise<number | null> {
     .get(ctx.from.id) as { id: number } | undefined;
   if (row) return row.id;
   return null;
+}
+
+export async function handleExamsReport(ctx: Context): Promise<void> {
+  if (ctx.chat?.type !== 'private') {
+    await ctx.reply('Отчёт по exams доступен только в личных сообщениях с ботом.');
+    return;
+  }
+  const studentId = await getOrCreateStudentId(ctx);
+  if (!studentId) {
+    await ctx.reply('Сначала нажмите /start, чтобы я вас зарегистрировал.');
+    return;
+  }
+  const today = getDateInMoscow();
+  const payload = await buildExamsReportPayload({ studentId, screenDateIso: today, page: 0, pageSize: 6 });
+  await ctx.reply(payload.text, { reply_markup: { inline_keyboard: payload.inline_keyboard } });
 }
 
 /** Кнопки разделов админ-помощи (/help у админа). */
@@ -293,6 +378,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
     '/start — зарегистрироваться и привязаться к группе',
     '/settings — настройки ЛС и тихих часов',
     '/subjects — выбрать предметы для личных уведомлений',
+    '/exams_report — отправить отчёт (фото/скрин) по уроку/ДЗ exams',
     '/planner — как работает планер учебных задач',
     '',
   ];
@@ -562,10 +648,12 @@ export async function handleStart(ctx: Context): Promise<void> {
         '— /help — справка\n' +
         '— /settings — настройки ЛС и тихих часов\n' +
         '— /subjects — выбрать предметы для уведомлений\n' +
+        '— /exams_report — быстро отправить отчёт по уроку/ДЗ (exams)\n' +
         '— /planner — планер учебных задач',
       Markup.keyboard([
         ['/help', '/settings'],
         ['/subjects', '/planner'],
+        ['/exams_report'],
       ]).resize()
     );
 
@@ -997,18 +1085,7 @@ export async function handlePlannerDoneSummary(ctx: Context): Promise<void> {
   });
 }
 
-/** Планер: обязательные "exams" — студент нажал "Отправить фото" */
-export async function handlePlannerExamUpload(ctx: Context): Promise<void> {
-  const cb = ctx.callbackQuery;
-  if (!cb || !('data' in cb) || !ctx.from) return;
-  if (!cb.data.startsWith('planner_exam_upload_')) return;
-
-  const submissionId = parseInt(cb.data.replace('planner_exam_upload_', ''), 10);
-  if (!Number.isFinite(submissionId)) {
-    await safeAnswerCbQuery(ctx, 'Ошибка данных.');
-    return;
-  }
-
+async function beginExamEvidenceFlow(ctx: Context, submissionId: number): Promise<void> {
   const db = getDb();
   const row = db
     .prepare(
@@ -1017,27 +1094,155 @@ export async function handlePlannerExamUpload(ctx: Context): Promise<void> {
        JOIN students s ON s.id = pes.student_id
        WHERE pes.id = ? AND s.telegram_user_id = ?`
     )
-    .get(submissionId, ctx.from.id) as { id: number } | undefined;
+    .get(submissionId, ctx.from!.id) as { id: number } | undefined;
 
   if (!row) {
     await safeAnswerCbQuery(ctx, 'Эта запись не принадлежит вам.');
     return;
   }
 
-  plannerExamAwaitingPhoto.set(ctx.from.id, { submissionId });
+  const submissionMeta = db
+    .prepare(
+      `SELECT id, status, evidence_file_id, completion_date
+       FROM planner_exam_submissions
+       WHERE id = ?`
+    )
+    .get(submissionId) as
+    | { id: number; status: string; evidence_file_id: string | null; completion_date: string | null }
+    | undefined;
+
+  examAwaitingPhoto.set(ctx.from!.id, { submissionId });
+  examAwaitingCompletionDate.delete(ctx.from!.id);
   await safeAnswerCbQuery(ctx);
   await deleteCallbackMessage(ctx);
-  await safeReply(
-    ctx,
-    'Отправь фото или скрин с доказательством. Лучше сразу укажи дату выполнения в подписи к снимку (например `07 03` или `7 марта`). Если без даты в подписи — после фото отправь дату одним сообщением в том же формате.'
-  );
+  const warnOverwrite =
+    submissionMeta?.evidence_file_id && (submissionMeta.status === 'pending' || submissionMeta.status === 'rejected')
+      ? '\n\nВнимание: по этой строке уже есть отправленное фото. Новое фото заменит предыдущее.'
+      : '';
+  const warnDate =
+    submissionMeta?.completion_date && (submissionMeta.status === 'pending' || submissionMeta.status === 'rejected')
+      ? `\n\nСейчас указана дата сдачи: ${submissionMeta.completion_date}. Если пришлёшь новую дату — обновлю её.`
+      : '';
+
+  await safeReply(ctx, 'Отправь фото/скрин с доказательством.' + warnOverwrite + warnDate + '\n\n' +
+    'Дату можно указать в подписи к снимку или отдельным сообщением.\n' +
+    'Формат даты: `ДД-ММ` (например `07-03` или `7 марта`).', {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '⬅ Назад к списку', callback_data: 'exams_report_open' }],
+        [{ text: '⏹ Отмена', callback_data: 'exams_report_cancel' }],
+      ],
+    },
+  });
 }
 
-/** Сохранить дату и разослать админам на модерацию (общий путь: подпись к фото или текст DD MM). */
+/** Exams report: открыть форму из кнопки. */
+export async function handleExamsReportOpen(ctx: Context): Promise<void> {
+  const cb = ctx.callbackQuery;
+  if (!cb || !('data' in cb) || !ctx.from) return;
+  if (cb.data !== 'exams_report_open') return;
+  if (ctx.chat?.type !== 'private') {
+    await safeAnswerCbQuery(ctx, 'Доступно только в личке.');
+    return;
+  }
+  const db = getDb();
+  const student = db
+    .prepare('SELECT id FROM students WHERE telegram_user_id = ?')
+    .get(ctx.from.id) as { id: number } | undefined;
+  if (!student) {
+    await safeAnswerCbQuery(ctx);
+    await safeReply(ctx, 'Сначала нажмите /start, чтобы я вас зарегистрировал.');
+    return;
+  }
+  const today = getDateInMoscow();
+  const payload = await buildExamsReportPayload({ studentId: student.id, screenDateIso: today, page: 0, pageSize: 6 });
+  await safeAnswerCbQuery(ctx);
+  await deleteCallbackMessage(ctx);
+  await safeReply(ctx, payload.text, { reply_markup: { inline_keyboard: payload.inline_keyboard } });
+}
+
+/** Exams report: пагинация списка. */
+export async function handleExamsReportMore(ctx: Context): Promise<void> {
+  const cb = ctx.callbackQuery;
+  if (!cb || !('data' in cb) || !ctx.from) return;
+  if (!cb.data.startsWith('exams_report_more_')) return;
+  if (ctx.chat?.type !== 'private') {
+    await safeAnswerCbQuery(ctx, 'Доступно только в личке.');
+    return;
+  }
+  const page = parseInt(cb.data.replace('exams_report_more_', ''), 10);
+  if (!Number.isFinite(page) || page < 0 || page > 100) {
+    await safeAnswerCbQuery(ctx, 'Ошибка данных.');
+    return;
+  }
+  const db = getDb();
+  const student = db
+    .prepare('SELECT id FROM students WHERE telegram_user_id = ?')
+    .get(ctx.from.id) as { id: number } | undefined;
+  if (!student) {
+    await safeAnswerCbQuery(ctx);
+    await safeReply(ctx, 'Сначала нажмите /start, чтобы я вас зарегистрировал.');
+    return;
+  }
+  const today = getDateInMoscow();
+  const payload = await buildExamsReportPayload({ studentId: student.id, screenDateIso: today, page, pageSize: 6 });
+  await safeAnswerCbQuery(ctx);
+  await deleteCallbackMessage(ctx);
+  await safeReply(ctx, payload.text, { reply_markup: { inline_keyboard: payload.inline_keyboard } });
+}
+
+/** Exams report: закрыть форму. */
+export async function handleExamsReportCancel(ctx: Context): Promise<void> {
+  const cb = ctx.callbackQuery;
+  if (!cb || !('data' in cb) || !ctx.from) return;
+  if (cb.data !== 'exams_report_cancel') return;
+  await safeAnswerCbQuery(ctx);
+  await deleteCallbackMessage(ctx);
+  examAwaitingPhoto.delete(ctx.from.id);
+  examAwaitingCompletionDate.delete(ctx.from.id);
+}
+
+/** Exams report: студент нажал «Фото …» */
+export async function handleExamsReportUpload(ctx: Context): Promise<void> {
+  const cb = ctx.callbackQuery;
+  if (!cb || !('data' in cb) || !ctx.from) return;
+  if (!cb.data.startsWith('exams_report_upload_')) return;
+  if (ctx.chat?.type !== 'private') {
+    await safeAnswerCbQuery(ctx, 'Доступно только в личке.');
+    return;
+  }
+  const submissionId = parseInt(cb.data.replace('exams_report_upload_', ''), 10);
+  if (!Number.isFinite(submissionId)) {
+    await safeAnswerCbQuery(ctx, 'Ошибка данных.');
+    return;
+  }
+  await beginExamEvidenceFlow(ctx, submissionId);
+}
+
+/** Планер: обязательные "exams" — студент нажал "Отправить фото" (алиас к общему флоу) */
+export async function handlePlannerExamUpload(ctx: Context): Promise<void> {
+  const cb = ctx.callbackQuery;
+  if (!cb || !('data' in cb) || !ctx.from) return;
+  if (!cb.data.startsWith('planner_exam_upload_')) return;
+  if (ctx.chat?.type !== 'private') {
+    await safeAnswerCbQuery(ctx, 'Доступно только в личке.');
+    return;
+  }
+
+  const submissionId = parseInt(cb.data.replace('planner_exam_upload_', ''), 10);
+  if (!Number.isFinite(submissionId)) {
+    await safeAnswerCbQuery(ctx, 'Ошибка данных.');
+    return;
+  }
+
+  await beginExamEvidenceFlow(ctx, submissionId);
+}
+
+/** Сохранить дату и разослать админам на модерацию (общий путь: подпись к фото или текст ДД-ММ). */
 async function finalizeExamSubmissionToAdmins(ctx: Context, submissionId: number, iso: string): Promise<void> {
   setExamCompletionDate(submissionId, iso);
-  plannerExamAwaitingCompletionDate.delete(ctx.from!.id);
-  plannerExamAwaitingPhoto.delete(ctx.from!.id);
+  examAwaitingCompletionDate.delete(ctx.from!.id);
+  examAwaitingPhoto.delete(ctx.from!.id);
 
   const moderation = getSubmissionForModeration(submissionId);
   if (!moderation) {
@@ -1107,52 +1312,82 @@ async function finalizeExamSubmissionToAdmins(ctx: Context, submissionId: number
 /** Планер: обязательные "exams" — принимаем фото */
 export async function handlePlannerExamPhoto(ctx: Context): Promise<void> {
   if (ctx.chat?.type !== 'private' || !ctx.from) return;
-  const st = plannerExamAwaitingPhoto.get(ctx.from.id);
+  const st = examAwaitingPhoto.get(ctx.from.id);
   if (!st) return;
   if (!ctx.message || !('photo' in ctx.message)) return;
 
   const photos = (ctx.message as any).photo;
   if (!Array.isArray(photos) || photos.length === 0) return;
-
   const best = photos[photos.length - 1] as { file_id?: string };
   const fileId = best?.file_id;
   if (!fileId) return;
 
   const messageId = (ctx.message as any).message_id as number | undefined;
   if (typeof messageId !== 'number') return;
-
   const caption = (ctx.message as any).caption as string | null | undefined;
 
-  upsertExamEvidence(st.submissionId, { fileId, messageId, caption });
+  await handleExamEvidenceReceived(ctx, { submissionId: st.submissionId, fileId, messageId, caption });
+}
 
-  plannerExamAwaitingPhoto.delete(ctx.from.id);
+/** Exams: принимаем скрин как документ (например, «как файл» на iOS/Android). */
+export async function handlePlannerExamDocument(ctx: Context): Promise<void> {
+  if (ctx.chat?.type !== 'private' || !ctx.from) return;
+  const st = examAwaitingPhoto.get(ctx.from.id);
+  if (!st) return;
+  if (!ctx.message || !('document' in ctx.message)) return;
+
+  const doc = (ctx.message as any).document as { file_id?: string } | undefined;
+  const fileId = doc?.file_id;
+  if (!fileId) return;
+
+  const messageId = (ctx.message as any).message_id as number | undefined;
+  if (typeof messageId !== 'number') return;
+  const caption = (ctx.message as any).caption as string | null | undefined;
+
+  await handleExamEvidenceReceived(ctx, { submissionId: st.submissionId, fileId, messageId, caption });
+}
+
+async function handleExamEvidenceReceived(
+  ctx: Context,
+  params: { submissionId: number; fileId: string; messageId: number; caption: string | null | undefined }
+): Promise<void> {
+  upsertExamEvidence(params.submissionId, { fileId: params.fileId, messageId: params.messageId, caption: params.caption });
+  examAwaitingPhoto.delete(ctx.from!.id);
 
   const ref = new Date();
-  const isoFromCaption = parseRuDateFromCaption(caption, ref);
+  const isoFromCaption = parseRuDateFromCaption(params.caption, ref);
   if (isoFromCaption) {
-    await finalizeExamSubmissionToAdmins(ctx, st.submissionId, isoFromCaption);
+    await finalizeExamSubmissionToAdmins(ctx, params.submissionId, isoFromCaption);
     return;
   }
 
-  plannerExamAwaitingCompletionDate.set(ctx.from.id, { submissionId: st.submissionId });
+  examAwaitingCompletionDate.set(ctx.from!.id, { submissionId: params.submissionId });
   await safeReply(
     ctx,
-    'Фото сохранено без даты в подписи. Укажи дату в подписи к новому фото или одним сообщением сюда (например `07 03` или `7 марта`).'
+    'Скрин сохранён без даты в подписи. Укажи дату одним сообщением сюда (например `07-03` или `7 марта`).',
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '⬅ Назад к списку', callback_data: 'exams_report_open' }],
+          [{ text: '⏹ Отмена', callback_data: 'exams_report_cancel' }],
+        ],
+      },
+    }
   );
 }
 
-/** Планер: обязательные "exams" — принимаем дату выполнения (DD MM), если не было в подписи */
+/** Планер: обязательные "exams" — принимаем дату выполнения (ДД-ММ), если не было в подписи */
 export async function handlePlannerExamCompletionDateText(ctx: Context, next: () => Promise<void>): Promise<void> {
   if (ctx.chat?.type !== 'private' || !ctx.from) return next();
   if (!('text' in (ctx.message || {}))) return next();
 
-  const st = plannerExamAwaitingCompletionDate.get(ctx.from.id);
+  const st = examAwaitingCompletionDate.get(ctx.from.id);
   if (!st) return next();
 
   const input = (ctx.message as any).text as string;
   const iso = parseRuDdMmToIso(input, new Date());
   if (!iso) {
-    await safeReply(ctx, 'Не понял дату. Пример: `07 марта`, `07 03` или подпись к фото с такой датой.');
+    await safeReply(ctx, 'Не понял дату. Пример: `07-03`, `07 марта` или подпись к фото с такой датой.');
     return;
   }
 
