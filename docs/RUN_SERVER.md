@@ -86,6 +86,18 @@ Gap-check (eligible>0 и submissions=0):
 docker compose exec bot npm run exams-gap-check:prod -- 2026-03-23 2026-03-28
 ```
 
+English synthetic (+3d от ближайшего english exams):
+
+```bash
+docker compose exec bot npm run english-synth:prod
+```
+
+или с центром (YYYY-MM-DD):
+
+```bash
+docker compose exec bot npm run english-synth:prod -- 2026-03-27
+```
+
 Проверка после фикса:
 
 ```bash

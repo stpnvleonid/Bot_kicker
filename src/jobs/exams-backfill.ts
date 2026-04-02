@@ -1,5 +1,6 @@
 import { ensureExamSubmissionsForDateRange } from './planner-exams';
 import { markJobError, markJobSuccess } from '../db/job-health';
+import { ensureEnglishSyntheticExamsPlus3d } from './english-synthetic-exams';
 
 const BACKFILL_LOOKBACK_DAYS = 21;
 
@@ -28,6 +29,19 @@ export async function runExamsSubmissionsBackfillJob(options?: {
   const upToDateIso = options?.upToDateIso ?? getTodayIsoUtc();
 
   try {
+    // Доп. обязательные english exams (урок+ДЗ) — synthetic events, не зависят от календаря.
+    // Идемпотентно: calendar_events уникальны по (calendar_config_id, google_event_id),
+    // submissions — по (student_id, lesson_event_id, kind).
+    const eng = ensureEnglishSyntheticExamsPlus3d({ daysBack: 7, daysForward: 7, plusDays: 3 });
+    console.log(
+      '[ExamsBackfill] english synthetic',
+      `anchor_event_id=${eng.anchorEventId ?? 'none'}`,
+      `anchor_lesson_date=${eng.anchorLessonDate ?? 'none'}`,
+      `synthetic_date=${eng.syntheticLessonDate ?? 'none'}`,
+      `eligible_students=${eng.eligibleStudents}`,
+      `pairs_ensured=${eng.pairsEnsured}`
+    );
+
     const res = ensureExamSubmissionsForDateRange({
       fromIso,
       toIso,

@@ -142,6 +142,12 @@ function plannerToday(): string {
   return getDateInMoscow();
 }
 
+function addDaysIso(dateIso: string, days: number): string {
+  const d = new Date(`${dateIso}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 async function buildMandatoryExamsPreview(studentId: number, taskDateIso: string): Promise<string[]> {
   const exam = await selectPendingExamSubmissionsForStudent({
     studentId,
@@ -335,7 +341,7 @@ export async function handleExamsReport(ctx: Context): Promise<void> {
     return;
   }
   const today = getDateInMoscow();
-  const payload = await buildExamsReportPayload({ studentId, screenDateIso: today, page: 0, pageSize: 6 });
+  const payload = await buildExamsReportPayload({ studentId, screenDateIso: addDaysIso(today, 7), page: 0, pageSize: 6 });
   await ctx.reply(payload.text, { reply_markup: { inline_keyboard: payload.inline_keyboard } });
 }
 
@@ -1155,7 +1161,7 @@ export async function handleExamsReportOpen(ctx: Context): Promise<void> {
     return;
   }
   const today = getDateInMoscow();
-  const payload = await buildExamsReportPayload({ studentId: student.id, screenDateIso: today, page: 0, pageSize: 6 });
+  const payload = await buildExamsReportPayload({ studentId: student.id, screenDateIso: addDaysIso(today, 7), page: 0, pageSize: 6 });
   await safeAnswerCbQuery(ctx);
   await deleteCallbackMessage(ctx);
   await safeReply(ctx, payload.text, { reply_markup: { inline_keyboard: payload.inline_keyboard } });
@@ -1185,7 +1191,7 @@ export async function handleExamsReportMore(ctx: Context): Promise<void> {
     return;
   }
   const today = getDateInMoscow();
-  const payload = await buildExamsReportPayload({ studentId: student.id, screenDateIso: today, page, pageSize: 6 });
+  const payload = await buildExamsReportPayload({ studentId: student.id, screenDateIso: addDaysIso(today, 7), page, pageSize: 6 });
   await safeAnswerCbQuery(ctx);
   await deleteCallbackMessage(ctx);
   await safeReply(ctx, payload.text, { reply_markup: { inline_keyboard: payload.inline_keyboard } });

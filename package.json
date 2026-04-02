@@ -18,6 +18,7 @@
     "debug-routing": "ts-node scripts/debug-routing.ts",
     "debug-exams-monitor": "ts-node scripts/debug-exams-monitor.ts",
     "debug-exams-monitor:prod": "node dist/tools/exams-monitor-cli.js",
+    "english-synth:prod": "node dist/tools/english-synthetic-exams-cli.js",
     "exams-backfill:prod": "node dist/tools/exams-backfill-cli.js",
     "exams-gap-check:prod": "node dist/tools/exams-gap-check-cli.js",
     "backfill-event-subjects": "ts-node scripts/backfill-event-subjects.ts",
