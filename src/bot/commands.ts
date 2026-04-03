@@ -142,16 +142,11 @@ function plannerToday(): string {
   return getDateInMoscow();
 }
 
-function addDaysIso(dateIso: string, days: number): string {
-  const d = new Date(`${dateIso}T00:00:00.000Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
 async function buildMandatoryExamsPreview(studentId: number, taskDateIso: string): Promise<string[]> {
   const exam = await selectPendingExamSubmissionsForStudent({
     studentId,
     screenDateIso: taskDateIso,
+    matchLessonDateOnly: true,
     maxLessons: 2,
     maxHomeworks: 2,
     markPromptedAt: false, // утром только показываем, не сдвигаем ротацию top-4
@@ -186,6 +181,7 @@ async function buildExamsReportPayload(params: {
     maxLessons: 999,
     maxHomeworks: 999,
     markPromptedAt: false,
+    debtSortOldestFirst: true,
   }).catch((e) => {
     console.error('[ExamsReport] Failed to build pending list:', e);
     return { selected: [], totalLessons: 0, totalHomeworks: 0, totalPending: 0 };
@@ -269,6 +265,7 @@ async function buildPlannerDoneSummaryPayload(
   const exam = await selectPendingExamSubmissionsForStudent({
     studentId,
     screenDateIso: taskDateIso,
+    matchLessonDateOnly: true,
     maxLessons: 2,
     maxHomeworks: 2,
     markPromptedAt,
@@ -341,7 +338,7 @@ export async function handleExamsReport(ctx: Context): Promise<void> {
     return;
   }
   const today = getDateInMoscow();
-  const payload = await buildExamsReportPayload({ studentId, screenDateIso: addDaysIso(today, 7), page: 0, pageSize: 6 });
+  const payload = await buildExamsReportPayload({ studentId, screenDateIso: today, page: 0, pageSize: 6 });
   await ctx.reply(payload.text, { reply_markup: { inline_keyboard: payload.inline_keyboard } });
 }
 
@@ -913,6 +910,7 @@ export async function handlePlannerCount(ctx: Context): Promise<void> {
       const mandatory = await selectPendingExamSubmissionsForStudent({
         studentId,
         screenDateIso: taskDate,
+        matchLessonDateOnly: true,
         maxLessons: 2,
         maxHomeworks: 2,
         markPromptedAt: false,
@@ -949,6 +947,7 @@ export async function handlePlannerCount(ctx: Context): Promise<void> {
     const mandatory = await selectPendingExamSubmissionsForStudent({
       studentId,
       screenDateIso: taskDate,
+      matchLessonDateOnly: true,
       maxLessons: 2,
       maxHomeworks: 2,
       markPromptedAt: false,
@@ -1161,7 +1160,7 @@ export async function handleExamsReportOpen(ctx: Context): Promise<void> {
     return;
   }
   const today = getDateInMoscow();
-  const payload = await buildExamsReportPayload({ studentId: student.id, screenDateIso: addDaysIso(today, 7), page: 0, pageSize: 6 });
+  const payload = await buildExamsReportPayload({ studentId: student.id, screenDateIso: today, page: 0, pageSize: 6 });
   await safeAnswerCbQuery(ctx);
   await deleteCallbackMessage(ctx);
   await safeReply(ctx, payload.text, { reply_markup: { inline_keyboard: payload.inline_keyboard } });
@@ -1191,7 +1190,7 @@ export async function handleExamsReportMore(ctx: Context): Promise<void> {
     return;
   }
   const today = getDateInMoscow();
-  const payload = await buildExamsReportPayload({ studentId: student.id, screenDateIso: addDaysIso(today, 7), page, pageSize: 6 });
+  const payload = await buildExamsReportPayload({ studentId: student.id, screenDateIso: today, page, pageSize: 6 });
   await safeAnswerCbQuery(ctx);
   await deleteCallbackMessage(ctx);
   await safeReply(ctx, payload.text, { reply_markup: { inline_keyboard: payload.inline_keyboard } });
@@ -1238,6 +1237,24 @@ export async function handlePlannerExamUpload(ctx: Context): Promise<void> {
   const submissionId = parseInt(cb.data.replace('planner_exam_upload_', ''), 10);
   if (!Number.isFinite(submissionId)) {
     await safeAnswerCbQuery(ctx, 'Ошибка данных.');
+    return;
+  }
+
+  const db = getDb();
+  const subRow = db
+    .prepare(
+      `SELECT pes.lesson_date
+       FROM planner_exam_submissions pes
+       JOIN students s ON s.id = pes.student_id
+       WHERE pes.id = ? AND s.telegram_user_id = ?`
+    )
+    .get(submissionId, ctx.from.id) as { lesson_date: string } | undefined;
+  if (!subRow) {
+    await safeAnswerCbQuery(ctx, 'Эта запись не принадлежит вам.');
+    return;
+  }
+  if (subRow.lesson_date !== getDateInMoscow()) {
+    await safeAnswerCbQuery(ctx, 'Фото по exams можно отправить только для сегодняшнего урока/ДЗ.');
     return;
   }
 

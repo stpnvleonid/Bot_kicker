@@ -243,9 +243,13 @@ export async function ensureExamSubmissionsForStudent(studentId: number, screenD
 export async function selectPendingExamSubmissionsForStudent(params: {
   studentId: number;
   screenDateIso: string; // YYYY-MM-DD (planner day)
+  /** Планер/очередь: только строки с lesson_date = этому дню. /exams_report: false — все долги с lesson_date <= screenDate. */
+  matchLessonDateOnly?: boolean;
   maxLessons: number; // 2
   maxHomeworks: number; // 2
   markPromptedAt?: boolean; // default true for evening screen, false for morning preview
+  /** Только для /exams_report: сначала самые старые по lesson_date, без приоритета «недели экрана». */
+  debtSortOldestFirst?: boolean;
 }): Promise<{
   selected: Array<
     PlannerExamSubmissionRow & {
@@ -259,7 +263,15 @@ export async function selectPendingExamSubmissionsForStudent(params: {
   totalHomeworks: number;
   totalPending: number;
 }> {
-  const { studentId, screenDateIso, maxLessons, maxHomeworks, markPromptedAt = true } = params;
+  const {
+    studentId,
+    screenDateIso,
+    matchLessonDateOnly = false,
+    maxLessons,
+    maxHomeworks,
+    markPromptedAt = true,
+    debtSortOldestFirst = false,
+  } = params;
   const db = getDb();
 
   // Ensure records exist for relevant events in the lookback window.
@@ -268,15 +280,27 @@ export async function selectPendingExamSubmissionsForStudent(params: {
   const screenDateMoscow = getMoscowIsoDateFromIso(`${screenDateIso}T00:00:00.000Z`);
   const { weekStart, weekEnd } = getWeekRangeMonSat(screenDateMoscow);
 
-  const rows = db
-    .prepare(
-      `SELECT *
-       FROM planner_exam_submissions
-       WHERE student_id = ?
-         AND status IN ('pending','rejected')
-         AND lesson_date <= ?`
-    )
-    .all(studentId, screenDateMoscow) as PlannerExamSubmissionRow[];
+  const rows = (
+    matchLessonDateOnly
+      ? db
+          .prepare(
+            `SELECT *
+             FROM planner_exam_submissions
+             WHERE student_id = ?
+               AND status IN ('pending','rejected')
+               AND lesson_date = ?`
+          )
+          .all(studentId, screenDateMoscow)
+      : db
+          .prepare(
+            `SELECT *
+             FROM planner_exam_submissions
+             WHERE student_id = ?
+               AND status IN ('pending','rejected')
+               AND lesson_date <= ?`
+          )
+          .all(studentId, screenDateMoscow)
+  ) as PlannerExamSubmissionRow[];
 
   const lessons = rows.filter((r) => r.kind === 'lesson');
   const homeworks = rows.filter((r) => r.kind === 'homework');
@@ -298,27 +322,44 @@ export async function selectPendingExamSubmissionsForStudent(params: {
 
   const inWeekPassed = (lessonDate: string): boolean => lessonDate >= weekStart && lessonDate <= weekEnd;
 
-  lessons.sort((a, b) => {
-    const aIn = inWeekPassed(a.lesson_date);
-    const bIn = inWeekPassed(b.lesson_date);
-    if (aIn !== bIn) return aIn ? -1 : 1;
-    return sortByPromptThenDate(a, b);
-  });
+  if (debtSortOldestFirst) {
+    lessons.sort((a, b) => {
+      if (a.lesson_date !== b.lesson_date) return a.lesson_date.localeCompare(b.lesson_date);
+      return sortByPromptThenDate(a, b);
+    });
+  } else {
+    lessons.sort((a, b) => {
+      const aIn = inWeekPassed(a.lesson_date);
+      const bIn = inWeekPassed(b.lesson_date);
+      if (aIn !== bIn) return aIn ? -1 : 1;
+      return sortByPromptThenDate(a, b);
+    });
+  }
 
   const pickedLessons = lessons.slice(0, maxLessons);
   for (const l of pickedLessons) lessonEventIdSet.add(l.lesson_event_id);
 
-  homeworks.sort((a, b) => {
-    const aIn = inWeekPassed(a.lesson_date);
-    const bIn = inWeekPassed(b.lesson_date);
-    if (aIn !== bIn) return aIn ? -1 : 1;
+  if (debtSortOldestFirst) {
+    homeworks.sort((a, b) => {
+      const aMatches = lessonEventIdSet.has(a.lesson_event_id);
+      const bMatches = lessonEventIdSet.has(b.lesson_event_id);
+      if (aMatches !== bMatches) return aMatches ? -1 : 1;
+      if (a.lesson_date !== b.lesson_date) return a.lesson_date.localeCompare(b.lesson_date);
+      return sortByPromptThenDate(a, b);
+    });
+  } else {
+    homeworks.sort((a, b) => {
+      const aIn = inWeekPassed(a.lesson_date);
+      const bIn = inWeekPassed(b.lesson_date);
+      if (aIn !== bIn) return aIn ? -1 : 1;
 
-    const aMatches = lessonEventIdSet.has(a.lesson_event_id);
-    const bMatches = lessonEventIdSet.has(b.lesson_event_id);
-    if (aMatches !== bMatches) return aMatches ? -1 : 1;
+      const aMatches = lessonEventIdSet.has(a.lesson_event_id);
+      const bMatches = lessonEventIdSet.has(b.lesson_event_id);
+      if (aMatches !== bMatches) return aMatches ? -1 : 1;
 
-    return sortByPromptThenDate(a, b);
-  });
+      return sortByPromptThenDate(a, b);
+    });
+  }
 
   const pickedHomeworks = homeworks.slice(0, maxHomeworks);
 

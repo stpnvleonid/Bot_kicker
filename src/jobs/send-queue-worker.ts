@@ -206,6 +206,7 @@ export async function runSendQueueWorkerIteration(bot: {
             const exam = await selectPendingExamSubmissionsForStudent({
               studentId: task.student_id,
               screenDateIso: taskDate,
+              matchLessonDateOnly: true,
               maxLessons: 2,
               maxHomeworks: 2,
             });
