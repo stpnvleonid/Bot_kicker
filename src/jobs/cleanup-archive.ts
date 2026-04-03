@@ -50,8 +50,12 @@ export async function runCleanupArchiveJob(): Promise<void> {
       `DELETE FROM selections WHERE created_at < datetime('now', '-1 day')`
     ).run();
     // Агрессивная очистка: удаляем события старше 3 дней (completed/cancelled) и связанные записи.
+    // Не трогаем события с planner_exam_submissions: FK ON DELETE CASCADE иначе сотрёт долги/историю exams.
     const oldEventsSubquery =
-      `SELECT id FROM calendar_events WHERE end_at < datetime('now', '-3 days') AND status IN ('completed','cancelled')`;
+      `SELECT ce.id FROM calendar_events ce
+       WHERE ce.end_at < datetime('now', '-3 days')
+         AND ce.status IN ('completed','cancelled')
+         AND NOT EXISTS (SELECT 1 FROM planner_exam_submissions pes WHERE pes.lesson_event_id = ce.id)`;
     const r5 = db
       .prepare(`DELETE FROM send_queue WHERE event_id IN (${oldEventsSubquery})`)
       .run();
