@@ -18,7 +18,10 @@ import {
   runPlannerFullExportJobForDate,
   runPlannerEveningJobForDate,
 } from '../jobs/planner';
-import { selectPendingExamSubmissionsForStudent } from '../jobs/planner-exams';
+import {
+  EXAMS_REPORT_ENSURE_LOOKBACK_DAYS,
+  selectPendingExamSubmissionsForStudent,
+} from '../jobs/planner-exams';
 import { parseRuDateFromCaption, parseRuDdMmToIso } from '../utils/parse-ru-dd-mm';
 import { DEBTS_MENU_SUBJECT_KEYS, getAttendanceDebtsBySubject } from '../google/attendance-debts';
 import { exportExamsWeekCsv } from '../jobs/exams-export';
@@ -178,6 +181,7 @@ async function buildExamsReportPayload(params: {
   const exam = await selectPendingExamSubmissionsForStudent({
     studentId,
     screenDateIso,
+    ensureLookbackDays: EXAMS_REPORT_ENSURE_LOOKBACK_DAYS,
     maxLessons: 999,
     maxHomeworks: 999,
     markPromptedAt: false,

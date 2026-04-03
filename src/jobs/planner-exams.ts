@@ -4,7 +4,14 @@ import { ensureExamSubmissionExists, getSubmissionForModeration, setExamLastProm
 import { getMoscowIsoDateFromIso, getWeekRangeMonSat, formatRuShortDate } from '../utils/date-helpers';
 
 const EXAMS_KEYWORD = 'exams';
+/** Окно календаря при досоздании строк для планера/напоминаний (от screenDate назад). */
 const LOOKBACK_DAYS = 21;
+
+/**
+ * Для /exams_report: насколько глубоко искать exams-события в календаре, чтобы создать недостающие строки.
+ * Иначе при LOOKBACK_DAYS старые уроки не материализуются в БД и не попадают в отчёт, хотя SELECT готов показать всю историю.
+ */
+export const EXAMS_REPORT_ENSURE_LOOKBACK_DAYS = 400;
 
 function isExamsEvent(title: string, description: string | null | undefined): boolean {
   const text = `${title ?? ''} ${description ?? ''}`.toLowerCase();
@@ -217,12 +224,17 @@ export function ensureExamSubmissionsForDateRange(params: {
   };
 }
 
-export async function ensureExamSubmissionsForStudent(studentId: number, screenDateIso: string): Promise<void> {
+export async function ensureExamSubmissionsForStudent(
+  studentId: number,
+  screenDateIso: string,
+  options?: { lookbackDays?: number }
+): Promise<void> {
   const db = getDb();
 
+  const lookbackDays = options?.lookbackDays ?? LOOKBACK_DAYS;
   const screenDateMoscow = getMoscowIsoDateFromIso(`${screenDateIso}T00:00:00.000Z`);
   const lookbackStart = new Date(`${screenDateMoscow}T00:00:00.000Z`);
-  lookbackStart.setUTCDate(lookbackStart.getUTCDate() - LOOKBACK_DAYS);
+  lookbackStart.setUTCDate(lookbackStart.getUTCDate() - lookbackDays);
   const fromIso = lookbackStart.toISOString();
   const toIso = new Date(`${screenDateMoscow}T23:59:59.000Z`).toISOString();
 
@@ -245,6 +257,11 @@ export async function selectPendingExamSubmissionsForStudent(params: {
   screenDateIso: string; // YYYY-MM-DD (planner day)
   /** Планер/очередь: только строки с lesson_date = этому дню. /exams_report: false — все долги с lesson_date <= screenDate. */
   matchLessonDateOnly?: boolean;
+  /**
+   * Глубина досоздания строк из календаря (дней назад от screenDate). По умолчанию LOOKBACK_DAYS (21).
+   * Для /exams_report передаётся EXAMS_REPORT_ENSURE_LOOKBACK_DAYS.
+   */
+  ensureLookbackDays?: number;
   maxLessons: number; // 2
   maxHomeworks: number; // 2
   markPromptedAt?: boolean; // default true for evening screen, false for morning preview
@@ -267,6 +284,7 @@ export async function selectPendingExamSubmissionsForStudent(params: {
     studentId,
     screenDateIso,
     matchLessonDateOnly = false,
+    ensureLookbackDays,
     maxLessons,
     maxHomeworks,
     markPromptedAt = true,
@@ -275,7 +293,11 @@ export async function selectPendingExamSubmissionsForStudent(params: {
   const db = getDb();
 
   // Ensure records exist for relevant events in the lookback window.
-  await ensureExamSubmissionsForStudent(studentId, screenDateIso);
+  await ensureExamSubmissionsForStudent(
+    studentId,
+    screenDateIso,
+    ensureLookbackDays != null ? { lookbackDays: ensureLookbackDays } : undefined
+  );
 
   const screenDateMoscow = getMoscowIsoDateFromIso(`${screenDateIso}T00:00:00.000Z`);
   const { weekStart, weekEnd } = getWeekRangeMonSat(screenDateMoscow);
